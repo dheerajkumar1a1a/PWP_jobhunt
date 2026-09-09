@@ -5,16 +5,34 @@ from pathlib import Path
 
 def render_markdown(targets: list[dict], output: str = "out/research_gap_report.md") -> str:
     lines = ["# Research-gap internship targets", "", "Human review required before outreach.", ""]
+    if not targets:
+        lines += ["No candidates met the configured threshold in this run.", ""]
     for i, t in enumerate(targets, 1):
         lines += [
             f"## {i}. {t.get('author_name','Unknown researcher')}",
             f"**Researcher score:** {t.get('researcher_score', 0):.2f}",
             f"**Affiliations:** {', '.join(t.get('affiliations', [])) or 'unresolved'}",
+            f"**Review status:** {t.get('review_status', 'pending')}",
             "",
         ]
         for p in t.get("papers", [])[:3]:
-            lines += [f"- **{p.get('title','Untitled')}** — paper score {p.get('score', 0):.2f} — {p.get('doi') or 'no DOI'}"]
-        lines += ["", "> Review the original paper, gap evidence, affiliation and public contact before use.", ""]
+            lines += [
+                f"### {p.get('title','Untitled')}",
+                f"Paper score: {p.get('score', 0):.2f}",
+                f"DOI: {p.get('doi') or 'none'}",
+                f"Source provider: {p.get('source_provider') or 'metadata source'}",
+                "",
+            ]
+            for g in (p.get("gaps") or [])[:3]:
+                lines += [
+                    f"**Gap type:** {g.get('gap_type', 'unknown')}",
+                    f"**Capability mapped:** {g.get('capability', 'unknown')}",
+                    f"**Evidence:** {g.get('evidence', '')}",
+                    f"**Proposed bridge:** {g.get('bridge', '')}",
+                    f"**Gap strength:** {g.get('gap_strength', 0):.2f} | **Capability:** {g.get('capability_strength', 0):.2f} | **Bridge:** {g.get('bridge_strength', 0):.2f}",
+                    "",
+                ]
+        lines += ["> Verify the original paper, the exact limitation, author identity/affiliation, public institutional contact, and proposed experiment before outreach.", ""]
     text = "\n".join(lines)
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     Path(output).write_text(text, encoding="utf-8")
