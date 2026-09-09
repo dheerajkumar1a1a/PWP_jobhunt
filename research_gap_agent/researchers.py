@@ -14,7 +14,12 @@ def aggregate_researchers(papers: list[dict], minimum_score: float = 70.0) -> li
             if not name:
                 continue
             g = grouped[name]
-            g["papers"].append({"title": paper.get("title"), "doi": paper.get("doi"), "score": score})
+            g["papers"].append({
+                "title": paper.get("title"),
+                "doi": paper.get("doi"),
+                "score": score,
+                "gaps": paper.get("gaps", []),
+            })
             if author.get("institution"):
                 g["affiliations"].add(author["institution"])
             g["max_score"] = max(g["max_score"], score)
