@@ -1,0 +1,44 @@
+project:
+  name: "Non-Destructive Differential Optical Colorimetry for Comparative Pungency Classification of Onion Layers"
+  objective: "Use smartphone optical measurements to classify comparative onion-layer pungency without destroying the sample."
+capabilities:
+  non_destructive: true
+  smartphone_based: true
+  low_cost: true
+  portable: true
+  lightweight: true
+  small_footprint: true
+  fixed_sample_distance: true
+  image_segmentation: true
+  irregular_object_segmentation: true
+  cpu_only: true
+  static_image_processing: true
+  sub_second_analysis_target: true
+  absolute_cielab: true
+  differential_colorimetry: true
+  delta_e: true
+  biochemical_gradient_correlation: true
+  comparative_classification: true
+  agricultural_food_application: true
+validation:
+  absolute_lab_r2:
+    L: 0.9907
+    a: 0.9959
+    b: 0.9912
+  differential_r2: 0.9971
+  chemical_pyruvate_range_umol_g: [2.20, 3.80]
+  calibration_r2: 0.8977
+  segmentation_threshold: 174.900
+constraints:
+  reject_title_only_matches: true
+  require_explicit_gap_evidence: true
+  require_capability_gap_link: true
+  require_public_institutional_contact: true
+  outreach_requires_human_approval: true
+search:
+  seed_queries:
+    - "onion pungency pyruvic acid colorimetry"
+    - "onion pungency non destructive imaging"
+    - "smartphone colorimetry food quality"
+    - "differential colorimetry biochemical gradient"
+    - "computer vision onion layer quality"
