@@ -1,0 +1,27 @@
+name: Research Gap Scan
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run discovery scan
+        run: python -m research_gap_agent.cli scan --config research_gap_agent/config/technology_spec.yaml --db research_gap.db
+      - name: Upload review database
+        uses: actions/upload-artifact@v4
+        with:
+          name: research-gap-results
+          path: research_gap.db
