@@ -38,10 +38,12 @@ jobs:
               print('Telegram secrets missing; skipping notification.')
               raise SystemExit(0)
           send_message(format_run_summary(
-              os.getenv('RG_SCANNED','0'),
-              os.getenv('RG_CANDIDATES','0'),
-              os.getenv('RG_PRIORITY','0'),
-              os.getenv('RG_ERRORS','0'),
+              int(os.getenv('RG_SCANNED','0')),
+              int(os.getenv('RG_CANDIDATES','0')),
+              int(os.getenv('RG_PRIORITY','0')),
+              int(os.getenv('RG_ERRORS','0')),
+              int(os.getenv('RG_DEEP_FULLTEXT','0')),
+              int(os.getenv('RG_VERIFIED_CONTACTS','0')),
           ))
           db = 'data/research_gap.db'
           if os.path.exists(db):
