@@ -31,12 +31,13 @@ jobs:
         run: |
           python - <<'PY'
           import os, sqlite3, json
-          from research_gap_agent.telegram import send_message, format_run_summary, format_candidate
+          from research_gap_agent.telegram import send_message, format_run_summary, format_candidate, format_email_draft
           token = os.getenv('TELEGRAM_BOT_TOKEN','').strip()
           chat_id = os.getenv('TELEGRAM_CHAT_ID','').strip()
           if not token or not chat_id:
               print('Telegram secrets missing; skipping notification.')
               raise SystemExit(0)
+
           send_message(format_run_summary(
               int(os.getenv('RG_SCANNED','0')),
               int(os.getenv('RG_CANDIDATES','0')),
@@ -45,19 +46,29 @@ jobs:
               int(os.getenv('RG_DEEP_FULLTEXT','0')),
               int(os.getenv('RG_VERIFIED_CONTACTS','0')),
           ))
+
           db = 'data/research_gap.db'
-          if os.path.exists(db):
-              conn = sqlite3.connect(db)
-              rows = conn.execute('SELECT author_name, affiliations_json, researcher_score, papers_json FROM researcher_targets ORDER BY researcher_score DESC LIMIT 3').fetchall()
-              conn.close()
-              for name, affiliations, score, papers_json in rows:
-                  affs = json.loads(affiliations or '[]')
-                  papers = json.loads(papers_json or '[]')
-                  aff = ', '.join(affs[:2]) if affs else 'Affiliation not resolved'
-                  paper = papers[0].get('title','') if papers else 'Paper not available'
-                  gaps = papers[0].get('gaps') or [] if papers else []
-                  gap = gaps[0].get('evidence','Gap evidence pending') if gaps else 'Gap evidence pending'
-                  send_message(format_candidate(name, aff, paper, float(score), gap))
+          if not os.path.exists(db):
+              raise SystemExit(0)
+          conn = sqlite3.connect(db)
+          targets = conn.execute('SELECT author_name, affiliations_json, researcher_score, papers_json FROM researcher_targets ORDER BY researcher_score DESC LIMIT 3').fetchall()
+          drafts = conn.execute('SELECT author_name, pitch, email FROM drafts ORDER BY rowid DESC LIMIT 3').fetchall()
+          conn.close()
+
+          draft_by_author = {a: (pitch, email) for a, pitch, email in drafts}
+          for name, affiliations, score, papers_json in targets:
+              affs = json.loads(affiliations or '[]')
+              papers = json.loads(papers_json or '[]')
+              aff = ', '.join(affs[:2]) if affs else 'Affiliation not resolved'
+              paper = papers[0].get('title','') if papers else 'Paper not available'
+              gaps = papers[0].get('gaps') or [] if papers else []
+              gap = gaps[0].get('evidence','Gap evidence pending') if gaps else 'Gap evidence pending'
+              send_message(format_candidate(name, aff, paper, float(score), gap))
+              pitch, email = draft_by_author.get(name, ('', ''))
+              if email:
+                  subject = f"Research internship proposal inspired by {paper}"[:256]
+                  draft_text, markup = format_email_draft(name, subject, email)
+                  send_message(draft_text, reply_markup=markup)
           PY
       - name: Upload review package
         if: always()
