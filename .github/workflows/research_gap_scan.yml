@@ -52,10 +52,14 @@ jobs:
               raise SystemExit(0)
           conn = sqlite3.connect(db)
           targets = conn.execute('SELECT author_name, affiliations_json, researcher_score, papers_json FROM researcher_targets ORDER BY researcher_score DESC LIMIT 3').fetchall()
-          drafts = conn.execute('SELECT author_name, pitch, email FROM drafts ORDER BY rowid DESC LIMIT 3').fetchall()
+          drafts = conn.execute('SELECT author_name, pitch, email FROM drafts ORDER BY rowid DESC').fetchall()
           conn.close()
 
-          draft_by_author = {a: (pitch, email) for a, pitch, email in drafts}
+          draft_by_author = {}
+          for author, pitch, email in drafts:
+              if author not in draft_by_author:
+                  draft_by_author[author] = (pitch, email)
+
           for name, affiliations, score, papers_json in targets:
               affs = json.loads(affiliations or '[]')
               papers = json.loads(papers_json or '[]')
@@ -66,7 +70,7 @@ jobs:
               send_message(format_candidate(name, aff, paper, float(score), gap))
               pitch, email = draft_by_author.get(name, ('', ''))
               if email:
-                  subject = f"Research internship proposal inspired by {paper}"[:256]
+                  subject = f"Research internship proposal inspired by {paper}"[:240]
                   draft_text, markup = format_email_draft(name, subject, email)
                   send_message(draft_text, reply_markup=markup)
           PY
