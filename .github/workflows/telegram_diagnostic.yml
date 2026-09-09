@@ -1,0 +1,85 @@
+name: Telegram Diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate Telegram configuration
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+          from urllib.error import HTTPError, URLError
+
+          token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+          chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+          if not token:
+              print("FAIL: TELEGRAM_BOT_TOKEN secret is missing or empty")
+              sys.exit(1)
+          if not chat_id:
+              print("FAIL: TELEGRAM_CHAT_ID secret is missing or empty")
+              sys.exit(1)
+
+          api = f"https://api.telegram.org/bot{token}"
+
+          def call(method, params=None):
+              data = urlencode(params or {}).encode()
+              req = Request(f"{api}/{method}", data=data, method="POST")
+              try:
+                  with urlopen(req, timeout=20) as r:
+                      payload = json.loads(r.read().decode("utf-8"))
+                  return payload
+              except HTTPError as e:
+                  raw = e.read().decode("utf-8", errors="replace")
+                  try:
+                      payload = json.loads(raw)
+                  except Exception:
+                      payload = {"ok": False, "description": raw[:300]}
+                  return payload
+              except URLError as e:
+                  return {"ok": False, "description": str(e)}
+
+          me = call("getMe")
+          if not me.get("ok"):
+              print("FAIL: Telegram bot token rejected")
+              print("Telegram response:", me.get("description", "unknown error"))
+              sys.exit(1)
+
+          bot = me.get("result", {})
+          print(f"PASS: bot token valid; bot=@{bot.get('username','unknown')} id={bot.get('id','unknown')}")
+
+          chat = call("getChat", {"chat_id": chat_id})
+          if not chat.get("ok"):
+              print("FAIL: TELEGRAM_CHAT_ID rejected or inaccessible")
+              print("Telegram response:", chat.get("description", "unknown error"))
+              print("TIP: open the bot in Telegram, press Start, send /start, and verify the numeric chat ID.")
+              sys.exit(1)
+
+          c = chat.get("result", {})
+          print(f"PASS: chat reachable; type={c.get('type')} title={c.get('title') or c.get('first_name') or ''}")
+
+          test_text = "✅ Telegram diagnostic passed for PWP_jobhunt research-gap pipeline."
+          sent = call("sendMessage", {"chat_id": chat_id, "text": test_text})
+          if not sent.get("ok"):
+              print("FAIL: bot token and chat ID were accepted, but sendMessage failed")
+              print("Telegram response:", sent.get("description", "unknown error"))
+              sys.exit(1)
+
+          print("PASS: test message sent successfully")
+          PY
