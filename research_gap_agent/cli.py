@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 
+from .fulltext import find_public_pdf, fetch_public_text, locate_gap_sentences
 from .gap_engine import score_paper, to_dict
 from .researchers import aggregate_researchers
 from .review_report import render_markdown
@@ -46,6 +47,31 @@ def load_scoring(cfg: dict, config_path: str) -> dict:
     return scoring
 
 
+def deep_analyze_record(record: dict, work: dict, capabilities: dict[str, bool]) -> dict:
+    """Re-score a promising paper from a publicly exposed PDF, when available."""
+    initial = float(record.get("score", 0))
+    if initial < 30:
+        return record
+    location = work.get("primary_location") or {}
+    pdf_url = find_public_pdf(work.get("doi"), location)
+    if not pdf_url:
+        return record
+    text = fetch_public_text(pdf_url)
+    if not text:
+        return {**record, "fulltext_url": pdf_url, "fulltext_status": "unreadable"}
+    score, gaps = score_paper(record["title"], text[:120000], capabilities)
+    gap_dicts = [to_dict(g) for g in gaps]
+    evidence = locate_gap_sentences(text)
+    return {
+        **record,
+        "score": max(initial, score),
+        "gaps": gap_dicts or record.get("gaps", []),
+        "fulltext_url": pdf_url,
+        "fulltext_status": "analyzed",
+        "fulltext_gap_sentences": evidence,
+    }
+
+
 def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: str = "out/research_gap_report.md"):
     cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
     scoring = load_scoring(cfg, config_path)
@@ -78,9 +104,11 @@ def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: s
             abstract = abstract_text(w)
             score, gaps = score_paper(title, abstract, capabilities)
             authors = [{"name": a.get("author", {}).get("display_name"), "institution": (a.get("institutions") or [{}])[0].get("display_name")} for a in w.get("authorships", [])]
-            record = {"id": pid, "doi": w.get("doi"), "title": title, "score": score, "authors": authors, "gaps": [to_dict(g) for g in gaps], "source_provider": w.get("source_provider")}
+            record = {"id": pid, "doi": w.get("doi"), "title": title, "score": score, "authors": authors, "gaps": [to_dict(g) for g in gaps], "source_provider": w.get("source_provider"), "year": w.get("publication_year"), "citations": w.get("cited_by_count", 0)}
+            if len(papers) < int((cfg.get("search") or {}).get("deep_fulltext_limit", 20)):
+                record = deep_analyze_record(record, w, capabilities)
             papers.append(record)
-            conn.execute("INSERT OR REPLACE INTO papers VALUES (?,?,?,?,?,?,?,?,?)", (pid, w.get("doi"), title, w.get("publication_year"), w.get("cited_by_count", 0), score, json.dumps(record["gaps"]), json.dumps(authors), json.dumps(w)))
+            conn.execute("INSERT OR REPLACE INTO papers VALUES (?,?,?,?,?,?,?,?,?)", (pid, w.get("doi"), title, w.get("publication_year"), w.get("cited_by_count", 0), record["score"], json.dumps(record["gaps"]), json.dumps(authors), json.dumps({**w, "fulltext_url": record.get("fulltext_url")})))
 
     min_score = float(scoring.get("minimum_target_score", 70))
     targets = aggregate_researchers(papers, min_score)[:int((cfg.get("outreach") or {}).get("max_candidates", 10))]
