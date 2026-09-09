@@ -13,7 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
-      TELEGRAM_ENABLED: ${{ vars.TELEGRAM_ENABLED || 'true' }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
@@ -31,23 +30,19 @@ jobs:
         if: always()
         run: |
           python - <<'PY'
-          import os
-          import sqlite3
-          import json
+          import os, sqlite3, json
           from research_gap_agent.telegram import send_message, format_run_summary, format_candidate
-
           token = os.getenv('TELEGRAM_BOT_TOKEN','').strip()
           chat_id = os.getenv('TELEGRAM_CHAT_ID','').strip()
-          enabled = os.getenv('TELEGRAM_ENABLED','true').lower() == 'true' and bool(token and chat_id)
-          if not enabled:
-              print('Telegram disabled or secrets missing; skipping notification.')
+          if not token or not chat_id:
+              print('Telegram secrets missing; skipping notification.')
               raise SystemExit(0)
-
-          scanned = os.getenv('RG_SCANNED','0')
-          candidates = os.getenv('RG_CANDIDATES','0')
-          priority = os.getenv('RG_PRIORITY','0')
-          send_message(format_run_summary(scanned, candidates, priority))
-
+          send_message(format_run_summary(
+              os.getenv('RG_SCANNED','0'),
+              os.getenv('RG_CANDIDATES','0'),
+              os.getenv('RG_PRIORITY','0'),
+              os.getenv('RG_ERRORS','0'),
+          ))
           db = 'data/research_gap.db'
           if os.path.exists(db):
               conn = sqlite3.connect(db)
@@ -58,7 +53,8 @@ jobs:
                   papers = json.loads(papers_json or '[]')
                   aff = ', '.join(affs[:2]) if affs else 'Affiliation not resolved'
                   paper = papers[0].get('title','') if papers else 'Paper not available'
-                  gap = (papers[0].get('gaps') or [{}])[0].get('evidence','') if papers else 'Gap evidence pending'
+                  gaps = papers[0].get('gaps') or [] if papers else []
+                  gap = gaps[0].get('evidence','Gap evidence pending') if gaps else 'Gap evidence pending'
                   send_message(format_candidate(name, aff, paper, float(score), gap))
           PY
       - name: Upload review package
