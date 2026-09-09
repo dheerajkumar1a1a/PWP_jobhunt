@@ -16,12 +16,12 @@ from .gap_engine import score_paper, to_dict
 from .researchers import aggregate_researchers
 from .review_report import render_markdown
 
-USER_AGENT = "research-gap-agent/0.5 (academic discovery; respectful rate; no automated outreach)"
+USER_AGENT = "research-gap-agent/0.6 (academic discovery; respectful rate; no automated outreach)"
 TRANSIENT_HTTP = {429, 500, 502, 503, 504}
 DEFAULT_SCORING = {"minimum_target_score": 70.0, "priority_score": 80.0}
 
 
-def get_json(url: str, retries: int = 5):
+def get_json(url: str, retries: int = 4):
     last_error = None
     for attempt in range(retries):
         req = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
@@ -34,23 +34,24 @@ def get_json(url: str, retries: int = 5):
                 raise
             retry_after = exc.headers.get("Retry-After") if exc.headers else None
             try:
-                # Keep CI waits bounded even when an upstream service asks for a long delay.
-                delay = min(30.0, float(retry_after)) if retry_after else min(30.0, 2.0 ** attempt)
+                delay = min(15.0, float(retry_after)) if retry_after else min(15.0, 2.0 ** attempt)
             except (TypeError, ValueError):
-                delay = min(30.0, 2.0 ** attempt)
+                delay = min(15.0, 2.0 ** attempt)
             print(f"Transient HTTP {exc.code}; retrying in {delay:.1f}s ({attempt + 1}/{retries})")
             time.sleep(delay)
         except (urllib.error.URLError, TimeoutError) as exc:
             last_error = exc
             if attempt == retries - 1:
                 raise
-            delay = min(30.0, 2.0 ** attempt)
+            delay = min(15.0, 2.0 ** attempt)
             print(f"Network error; retrying in {delay:.1f}s ({attempt + 1}/{retries})")
             time.sleep(delay)
     raise last_error or RuntimeError("request failed")
 
 
 def openalex_search(query: str, per_page: int = 25):
+    # Keep individual queries small to reduce rate pressure in scheduled CI.
+    per_page = min(per_page, 25)
     url = "https://api.openalex.org/works?search=" + quote(query) + f"&per-page={per_page}&select=id,doi,title,publication_year,authorships,abstract_inverted_index,primary_location,cited_by_count"
     try:
         return get_json(url).get("results", [])
@@ -59,7 +60,8 @@ def openalex_search(query: str, per_page: int = 25):
         return []
 
 
-def crossref_search(query: str, rows: int = 25):
+def crossref_search(query: str, rows: int = 10):
+    rows = min(rows, 10)
     url = "https://api.crossref.org/works?query.bibliographic=" + quote(query) + f"&rows={rows}&select=DOI,title,published,author,URL,is-referenced-by-count"
     try:
         items = get_json(url).get("message", {}).get("items", [])
@@ -129,11 +131,12 @@ def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: s
     papers: list[dict] = []
     seen: set[str] = set()
     errors = 0
-    for q in (cfg.get("search") or {}).get("seed_queries", []):
-        works = openalex_search(q, min(100, int((cfg.get("search") or {}).get("max_results_per_query", 25))))
+    search_cfg = cfg.get("search") or {}
+    per_query = min(25, int(search_cfg.get("max_results_per_query", 25)))
+    for q in search_cfg.get("seed_queries", []):
+        works = openalex_search(q, per_query)
         if not works:
-            # Provider fallback: Crossref metadata search is independent of OpenAlex availability.
-            works = crossref_search(q, min(50, int((cfg.get("search") or {}).get("max_results_per_query", 25))))
+            works = crossref_search(q, min(10, per_query))
         if not works:
             errors += 1
             print(f"No results from providers for query {q!r}")
@@ -150,7 +153,7 @@ def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: s
             record = {"id": pid, "doi": w.get("doi"), "title": title, "score": score, "authors": authors, "gaps": [to_dict(g) for g in gaps]}
             papers.append(record)
             conn.execute("INSERT OR REPLACE INTO papers VALUES (?,?,?,?,?,?,?,?,?)", (pid, w.get("doi"), title, w.get("publication_year"), w.get("cited_by_count", 0), score, json.dumps(record["gaps"]), json.dumps(authors), json.dumps(w)))
-        time.sleep(1.0)
+        time.sleep(1.5)
 
     min_score = float(scoring.get("minimum_target_score", 70))
     targets = aggregate_researchers(papers, min_score)[:int((cfg.get("outreach") or {}).get("max_candidates", 10))]
