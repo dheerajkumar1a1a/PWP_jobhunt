@@ -1,67 +1,90 @@
-# jobhunt configuration. Everything tunable lives here — no editing Python.
-#
-# Tune `filters` first. It is deterministic, free, and it is what keeps the
-# LLM bill small: roughly 2000 raw postings -> 40 candidates before a single
-# token is spent.
+# Personalized jobhunt configuration for Dheeraj Kumar.
+# Discovery uses public ATS adapters plus JobSpy. LLM screening remains the
+# relevance gate; the agent never submits applications.
 
 filters:
-  # Title regexes, matched case-insensitively against the job title only.
-  # A title must match at least one include AND zero excludes.
-  #
-  # Gotcha: "sde" as a bare regex does NOT match "Software Development
-  # Engineer" — different words entirely. Use \bsde\b for the acronym and
-  # list the spelled-out variants separately, as below.
   include_titles:
-    - '\b(data\s+analyst|research\s+analyst|business\s+analyst|analytics\s+analyst|mis\s+analyst|reporting\s+analyst)\b'
-    - '\banalyst\b.*\b(data|research|business|analytics|reporting|mis|operations|supply\s*chain)\b'
-    - '\b(data|research|business)\b.*\banalyst\b'
-    - '\bresearch\s+(associate|assistant|specialist)\b'
-    - '\bmarket\s+research\b'
+    - '\b(data\s+analyst|data\s+science\s+analyst|business\s+data\s+analyst|analytics\s+analyst)\b'
+    - '\b(data\s+scientist|data\s+science)\b'
+    - '\b(machine\s+learning|ml)\b.*\b(engineer|developer|specialist|analyst)\b'
+    - '\b(computer\s+vision|cv)\b.*\b(engineer|developer|scientist|specialist)\b'
+    - '\b(ai|artificial\s+intelligence)\b.*\b(engineer|developer|specialist|analyst)\b'
+    - '\b(ai|automation|rpa)\b.*\b(engineer|developer|specialist)\b'
+    - '\bpython\b.*\b(developer|engineer)\b'
+    - '\b(research|applied\s+research)\b.*\b(analyst|engineer|associate|assistant|specialist)\b'
 
-  # Anything matching these is dropped even if an include matched.
   exclude_titles:
     - '\b(staff|principal|distinguished|fellow|architect)\b'
-    - '\bsenior\b'
-    - '\b(director|vp|vice president|head of|chief|cto|lead|manager)\b'
-    - '\b(manager|management)\b'
+    - '\b(senior|sr\.?|lead)\b'
+    - '\b(director|vp|vice\s+president|head\s+of|chief|cto|manager|management)\b'
     - '\b(intern|internship|apprentice|trainee)\b'
-    - '\b(sales|account executive|marketing|recruit|support|success)\b'
-    - '\b(software\s+engineer|sde|frontend|front-end|ios|android|mobile|game|designer|devops|sre|platform\s+engineer)\b'
-    - '\b(data scientist|machine learning scientist|research scientist)\b'
+    - '\b(sales|account\s+executive|marketing|recruit|recruiter|support|customer\s+success)\b'
+    - '\b(frontend|front-end|ios|android|mobile|game|ui/?ux|designer|devops|sre|platform\s+engineer)\b'
 
-  # Substrings matched against "<location> <title>", case-insensitive.
-  # Metro-wide + remote coverage (expanded 2026-09-09). LLM screen rejects
-  # wrong cities; location gate just needs to not zero the funnel.
   locations:
-    - pune
-    - mumbai
-    - kanpur
-    - bangalore
     - bengaluru
+    - bangalore
+    - hyderabad
+    - pune
     - delhi
     - new delhi
     - noida
     - gurgaon
     - gurugram
-    - hyderabad
+    - mumbai
     - chennai
     - kolkata
     - ahmedabad
+    - kanpur
     - india
 
-  # If true, anything reading as remote passes the location gate.
   allow_remote: true
+  max_age_days: 14
 
-  # Drop postings older than this. Set to null to disable.
-  # Boards often re-stamp `updated_at`, so this is a soft signal, not a promise.
-  max_age_days: 30
+# --- JobSpy multi-board discovery ------------------------------------------
+# Current Python JobSpy sites are used here. Naukri is deliberately not listed
+# because the current upstream Python package does not expose it as a native
+# scraper; the Naukri fallback is documented in the setup notes.
+jobspy:
+  enabled: true
+  sites:
+    - linkedin
+    - indeed
+    - glassdoor
+    - google
+    - zip_recruiter
+    - bayt
+    - bdjobs
+  search_terms:
+    - data analyst
+    - data scientist
+    - machine learning engineer
+    - computer vision engineer
+    - AI automation engineer
+    - Python developer
+    - research analyst
+  locations:
+    - Bengaluru, India
+    - Hyderabad, India
+    - Pune, India
+    - Delhi NCR, India
+    - Mumbai, India
+    - Remote, India
+  results_wanted: 10
+  hours_old: 168
+  country_indeed: India
+  distance: 50
+  is_remote: true
+  job_type: fulltime
+  linkedin_fetch_description: true
+  sleep_seconds: 0.5
 
 # --- LLM stages -------------------------------------------------------------
-screen_batch_size: 8      # jobs per screening call. Higher = cheaper, sloppier.
-screen_jd_chars: 1400     # JD truncation for screening
-draft_jd_chars: 6000      # JD truncation for drafting
-score_threshold: 7.0      # below this, no draft and no digest slot
-max_per_digest: 5         # hard cap on expensive draft calls per run
+screen_batch_size: 8
+screen_jd_chars: 1800
+draft_jd_chars: 6000
+score_threshold: 7.5
+max_per_digest: 7
 
 # --- paths ------------------------------------------------------------------
 companies_file: companies.yaml
