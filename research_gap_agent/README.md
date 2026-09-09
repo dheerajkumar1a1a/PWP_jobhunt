@@ -1,20 +1,20 @@
 # $0 Research-Gap Internship Agent
 
-A free-first literature-to-researcher discovery pipeline. It treats a research project as a **technology baseline**, searches academic metadata, extracts evidence-backed research gaps, scores whether the baseline directly closes those gaps, resolves authors/affiliations, and produces human-reviewable internship/co-authorship outreach drafts.
+A free-first literature-to-researcher discovery pipeline. It treats a research project as a technology baseline, discovers scholarly work, extracts evidence-backed research gaps, maps those gaps to project capabilities, ranks researchers, and produces human-reviewable internship/co-authorship drafts.
 
-**Safety rule:** discovery and drafting are automated; outreach is never sent automatically.
+**Outreach rule:** discovery and drafting are automated; outreach is never sent automatically.
 
 ## Pipeline
 
-`technology_spec.yaml` → query generation → OpenAlex/Crossref → evidence filter → gap/capability scoring → author aggregation → public institutional contact verification → pitch/email drafts → SQLite/CSV review queue.
+`technology_spec.yaml` → OpenAlex/Crossref/Semantic Scholar → gap evidence → capability match → public-full-text deep analysis → researcher aggregation → public-contact enrichment → personalized pitch/email → human review → Telegram tracking.
 
-## $0 design
+## Free-first design
 
-- Python standard library + `requests` + `PyYAML` + `pandas` only.
-- OpenAlex and Crossref are used as free scholarly metadata sources; their terms/rate limits still apply.
-- No paid LLM is required. Deterministic extraction/scoring is the default.
-- Optional local LLM support can be added later (e.g. Ollama) without putting an API key in GitHub.
-- GitHub Actions schedules the scan and stores compact artifacts; SQLite is the local/state database.
+- Python + SQLite + PyYAML + pytest + pypdf.
+- Scholarly discovery uses free/public metadata endpoints subject to provider rate limits and terms.
+- Public full text is used only when an explicit public PDF/HTML URL is exposed; the agent does not bypass paywalls.
+- No paid LLM is required. Deterministic scoring/drafting is the default.
+- A local LLM can optionally be added later without storing a paid API key in GitHub.
 
 ## Run locally
 
@@ -35,11 +35,11 @@ python -m research_gap_agent.cli scan --config research_gap_agent/config/technol
 
 ## GitHub Actions
 
-The workflow in `.github/workflows/research_gap_scan.yml` runs weekly and can be started manually. It performs discovery only and uploads a review artifact. It does **not** send email.
+`.github/workflows/research_gap_scan.yml` runs weekly and supports manual dispatch. It installs dependencies, runs unit tests, performs multi-source academic discovery, analyzes a bounded number of publicly exposed full texts, generates a research-gap report, sends Telegram tracking notifications when the two Telegram secrets are present, and uploads the SQLite/Markdown review package. It never sends researcher outreach.
 
 ## Scoring philosophy
 
-A paper is a serious target only when its text contains an explicit or strongly evidenced limitation that maps to one or more baseline capabilities. Title similarity alone is insufficient. High scores require: (1) evidence of a limitation, (2) direct capability coverage, (3) plausible experimental bridge, and (4) identifiable author ownership of the research line.
+A paper is a serious target only when its text contains an explicit or strongly evidenced limitation that maps to one or more baseline capabilities. Title similarity alone is insufficient. High scores require evidence of a limitation, direct capability coverage, a plausible experimental bridge, and identifiable author ownership.
 
 Suggested thresholds:
 
@@ -50,4 +50,4 @@ Suggested thresholds:
 
 ## Human review gate
 
-Every generated contact record has `review_status=pending`. A person must verify the paper, the claimed gap, the affiliation, the public institutional email, and the proposed experiment before any outreach is sent.
+Every candidate remains `pending` until a person verifies the original paper, exact gap evidence, author identity/affiliation, public institutional contact, and proposed experiment. Email drafts are stored for review and are not sent automatically.
