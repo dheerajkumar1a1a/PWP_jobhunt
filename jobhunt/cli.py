@@ -1,7 +1,6 @@
 """jobhunt CLI: profile -> fetch -> prefilter -> screen -> draft -> digest -> mail.
 
-The agent never submits an application. It finds, filters, ranks and drafts.
-A human reads the digest, edits the note, and presses submit.
+The agent finds, filters, ranks and drafts. It never submits an application.
 """
 from __future__ import annotations
 
@@ -16,6 +15,7 @@ import yaml
 from . import digest as digest_mod
 from . import llm, mailer
 from .fetch import fetch_all
+from .jobspy_fetch import fetch_jobspy
 from .mock import fetch_all_mock
 from .prefilter import prefilter
 from .providers import LLMError, resolve
@@ -48,11 +48,15 @@ def _load_profile(cfg: dict, allow_sample: bool) -> dict | None:
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
 
-    sample = ROOT / "profile.example.json"
+    sample = ROOT / "profile.github_seed.json"
     if allow_sample and sample.exists():
         print(f"  ! {path} missing — using {sample.name} for this dry run.")
-        print("    Build the real one: python -m jobhunt profile --resume resume.pdf")
         return json.loads(sample.read_text(encoding="utf-8"))
+
+    legacy = ROOT / "profile.example.json"
+    if allow_sample and legacy.exists():
+        print(f"  ! {path} missing — using {legacy.name} for this dry run.")
+        return json.loads(legacy.read_text(encoding="utf-8"))
 
     print(f"missing {path} — run `python -m jobhunt profile --resume <file>` first")
     return None
@@ -96,17 +100,27 @@ def cmd_run(args) -> int:
 
     # ---- 1. fetch
     print("\n[1/5] fetching boards")
+    jobs = []
     if args.mock:
-        jobs = fetch_all_mock()
+        jobs.extend(fetch_all_mock())
     else:
         companies = _cfg(cfg.get("companies_file", "companies.yaml")).get("companies") or []
-        if not companies:
-            print("companies.yaml has no entries")
-            return 1
-        jobs = fetch_all(companies)
+        if companies:
+            jobs.extend(fetch_all(companies))
+
+        jobspy_cfg = cfg.get("jobspy", {}) or {}
+        if jobspy_cfg.get("enabled", False):
+            try:
+                print("  JobSpy: multi-board discovery")
+                got = fetch_jobspy(jobspy_cfg)
+                print(f"  JobSpy normalized {len(got)} postings")
+                jobs.extend(got)
+            except RuntimeError as e:
+                print(f"  ! JobSpy unavailable: {e}")
+
     scanned = len(jobs)
     if not scanned:
-        print("no postings fetched — check the slugs in companies.yaml")
+        print("no postings fetched — check companies.yaml and JobSpy configuration")
         return 1
 
     # ---- 2. prefilter + dedupe (deterministic, free, no LLM)
@@ -140,19 +154,17 @@ def cmd_run(args) -> int:
         print(f"\n[3/5] screening {len(jobs)} jobs via {provider.name}/{model}")
         llm.screen(jobs, profile,
                    batch_size=int(cfg.get("screen_batch_size", 8)),
-                   jd_chars=int(cfg.get("screen_jd_chars", 1400)),
+                   jd_chars=int(cfg.get("screen_jd_chars", 1800)),
                    provider=provider, model=model)
 
-    # If every batch failed, the digest would be empty and — worse — we would
-    # record these jobs as seen and never show them again. Bail instead.
     if scorer == "llm" and not any(j.score is not None for j in jobs):
         print("\n! screening scored nothing: every batch failed.\n"
               "  Not recording these jobs, so the next run retries them.\n"
               "  Check the warnings above (bad key, rate limit, wrong model id).")
         return 1
 
-    threshold = float(cfg.get("score_threshold", 7.0))
-    top_n = int(cfg.get("max_per_digest", 5))
+    threshold = float(cfg.get("score_threshold", 7.5))
+    top_n = int(cfg.get("max_per_digest", 7))
     shortlist = sorted([j for j in jobs if (j.score or 0) >= threshold],
                        key=lambda j: j.score or 0, reverse=True)[:top_n]
     print(f"  {len(shortlist)} scored >= {threshold}")
@@ -184,7 +196,7 @@ def cmd_run(args) -> int:
         try:
             mailer.send(subject, doc)
             sent = True
-        except Exception as e:  # bad app password, blocked port, offline
+        except Exception as e:
             print(f"  ! email failed ({type(e).__name__}: {e}) — digest still on disk")
     else:
         print("  --send not passed, email skipped")
@@ -231,8 +243,7 @@ def main(argv=None) -> int:
     sr = sub.add_parser("run", help="run the daily pipeline")
     sr.add_argument("--mock", action="store_true", help="bundled fixtures, no network")
     sr.add_argument("--scorer", choices=["llm", "keyword", "claude"], default="llm",
-                    help="keyword = offline stub, needs no API key ('claude' is an "
-                         "alias for 'llm', kept for older docs)")
+                    help="keyword = offline stub, needs no API key ('claude' is an alias for 'llm')")
     sr.add_argument("--no-draft", action="store_true", help="skip the expensive stage")
     sr.add_argument("--send", action="store_true", help="actually email the digest")
     sr.add_argument("--limit", type=int, help="cap jobs sent to the LLM (cost guard)")
