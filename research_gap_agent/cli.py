@@ -1,11 +1,20 @@
 from __future__ import annotations
-import argparse, json, sqlite3, time
+
+import argparse
+import json
+import sqlite3
+import time
 from pathlib import Path
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+
 import yaml
 
-USER_AGENT = "research-gap-agent/0.1 (academic discovery; contact repository owner before high-volume use)"
+from .gap_engine import score_paper, to_dict
+from .researchers import aggregate_researchers
+from .review_report import render_markdown
+
+USER_AGENT = "research-gap-agent/0.2 (academic discovery; conservative rate; no automated outreach)"
 
 
 def get_json(url: str):
@@ -21,50 +30,66 @@ def openalex_search(query: str, per_page: int = 25):
 
 def abstract_text(work):
     inv = work.get("abstract_inverted_index") or {}
-    words = []
-    for token, positions in inv.items():
-        for p in positions:
-            words.append((p, token))
+    words = [(p, token) for token, positions in inv.items() for p in positions]
     return " ".join(t for _, t in sorted(words))
 
 
-def evidence_score(text: str):
-    t = text.lower()
-    gap_terms = ["limitation", "limited", "challenge", "difficult", "cannot", "future work", "need to", "remain", "requires", "laborious", "expensive", "destructive"]
-    capability_terms = ["smartphone", "portable", "non-destructive", "colorimetry", "cielab", "computer vision", "segmentation", "rapid", "low-cost"]
-    return min(1.0, sum(x in t for x in gap_terms) / 4), min(1.0, sum(x in t for x in capability_terms) / 4)
-
-
-def scan(config_path: str, db_path: str = "research_gap.db"):
+def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: str = "out/research_gap_report.md"):
     cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
+    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
-    conn.execute("CREATE TABLE IF NOT EXISTS papers(id TEXT PRIMARY KEY, doi TEXT, title TEXT, year INTEGER, citations INTEGER, gap_evidence REAL, capability_match REAL, score REAL, authors_json TEXT, raw_json TEXT)")
+    conn.execute("CREATE TABLE IF NOT EXISTS papers(id TEXT PRIMARY KEY, doi TEXT, title TEXT, year INTEGER, citations INTEGER, score REAL, gap_json TEXT, authors_json TEXT, raw_json TEXT)")
     conn.execute("CREATE TABLE IF NOT EXISTS contacts(paper_id TEXT, author_name TEXT, affiliation TEXT, public_email TEXT, verification_url TEXT, review_status TEXT DEFAULT 'pending')")
     conn.execute("CREATE TABLE IF NOT EXISTS drafts(paper_id TEXT, author_name TEXT, pitch TEXT, email TEXT, review_status TEXT DEFAULT 'pending')")
-    seen = set()
+
+    capabilities = {k: True for k in cfg["project"].get("capabilities", [])}
+    papers: list[dict] = []
+    seen: set[str] = set()
     for q in cfg["search"]["seed_queries"]:
-        for w in openalex_search(q):
+        for w in openalex_search(q, min(100, int(cfg["search"].get("max_results_per_query", 25)))):
             pid = w.get("id")
             if not pid or pid in seen:
                 continue
             seen.add(pid)
-            text = (w.get("title") or "") + " " + abstract_text(w)
-            gap, match = evidence_score(text)
-            # Base score is intentionally conservative; deeper full-text analysis is a later stage.
-            score = round(30*gap + 25*match, 2)
-            authors = [{"name": a.get("author", {}).get("display_name"), "institution": (a.get("institutions") or [{}])[0].get("display_name")} for a in w.get("authorships", [])]
-            conn.execute("INSERT OR REPLACE INTO papers VALUES (?,?,?,?,?,?,?,?,?,?)", (pid, w.get("doi"), w.get("title"), w.get("publication_year"), w.get("cited_by_count",0), gap, match, score, json.dumps(authors), json.dumps(w)))
-        time.sleep(0.2)
-    conn.commit(); conn.close()
-    print(f"Scanned {len(seen)} unique works. Results: {db_path}")
+            title = w.get("title") or "Untitled"
+            abstract = abstract_text(w)
+            score, gaps = score_paper(title, abstract, capabilities)
+            authors = [
+                {"name": a.get("author", {}).get("display_name"), "institution": (a.get("institutions") or [{}])[0].get("display_name")}
+                for a in w.get("authorships", [])
+            ]
+            record = {"id": pid, "doi": w.get("doi"), "title": title, "score": score, "authors": authors, "gaps": [to_dict(g) for g in gaps]}
+            papers.append(record)
+            conn.execute(
+                "INSERT OR REPLACE INTO papers VALUES (?,?,?,?,?,?,?,?,?)",
+                (pid, w.get("doi"), title, w.get("publication_year"), w.get("cited_by_count", 0), score, json.dumps(record["gaps"]), json.dumps(authors), json.dumps(w)),
+            )
+        time.sleep(0.25)
+
+    min_score = float(cfg["scoring"].get("minimum_target_score", 70))
+    targets = aggregate_researchers(papers, min_score)
+    max_candidates = int(cfg["outreach"].get("max_candidates", 10))
+    targets = targets[:max_candidates]
+    report_path = render_markdown(targets, report_path)
+
+    conn.execute("CREATE TABLE IF NOT EXISTS researcher_targets(author_name TEXT PRIMARY KEY, affiliations_json TEXT, paper_count INTEGER, researcher_score REAL, papers_json TEXT, review_status TEXT DEFAULT 'pending')")
+    for t in targets:
+        conn.execute(
+            "INSERT OR REPLACE INTO researcher_targets VALUES (?,?,?,?,?,?)",
+            (t["author_name"], json.dumps(t["affiliations"]), t["paper_count"], t["researcher_score"], json.dumps(t["papers"]), "pending"),
+        )
+    conn.commit()
+    conn.close()
+    print(f"Scanned {len(seen)} unique works; {len(targets)} researcher targets >= {min_score}. Report: {report_path}")
 
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser()
+    p = argparse.ArgumentParser(description="Free-first research-gap discovery agent")
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("scan")
     s.add_argument("--config", required=True)
-    s.add_argument("--db", default="research_gap.db")
+    s.add_argument("--db", default="data/research_gap.db")
+    s.add_argument("--report", default="out/research_gap_report.md")
     a = p.parse_args()
     if a.cmd == "scan":
-        scan(a.config, a.db)
+        scan(a.config, a.db, a.report)
