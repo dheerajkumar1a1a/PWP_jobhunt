@@ -42,24 +42,36 @@ def send_message(text: str, cfg: TelegramConfig | None = None, timeout: int = 20
 
 def format_candidate(name: str, affiliation: str, paper: str, score: float, gap: str) -> str:
     return (
-        f"🔬 RESEARCH-GAP CANDIDATE\n\n{name}\n{affiliation}\n\n"
+        "🔬 RESEARCH-GAP CANDIDATE\n\n"
+        f"{name}\n{affiliation}\n\n"
         f"Fit score: {score:.1f}/100\nPaper: {paper}\n\n"
-        f"Why it matches:\n{gap[:1200]}\n\n"
-        "📧 A copy-ready email draft follows. Review the paper/gap before sending."
+        f"Why it matches:\n{gap[:1600]}\n\n"
+        "📧 Copy-ready email is below. Review the paper/gap before sending."
     )
 
 
 def format_email_draft(author_name: str, subject: str, body: str) -> tuple[str, dict]:
+    safe_subject = subject.strip()[:240]
+    safe_body = body.strip()
+    gmail_url = "https://mail.google.com/mail/?" + urlencode({
+        "view": "cm",
+        "fs": "1",
+        "su": safe_subject,
+        "body": safe_body,
+    })
     message = (
         "📧 COPY-READY EMAIL\n\n"
         f"To: {author_name.strip() or 'Researcher'}\n"
-        f"Subject: {subject}\n\n"
+        f"Subject: {safe_subject}\n\n"
         "──────── EMAIL BODY ────────\n"
-        f"{body}\n"
+        f"{safe_body}\n"
         "──────── END EMAIL ─────────\n\n"
-        "Telegram lets you long-press/select this message and Copy the full text for pasting into Gmail."
+        "Review the source paper, gap evidence, and recipient before sending."
     )
-    markup = {"inline_keyboard": [[{"text": "📋 Copy Subject", "copy_text": {"text": subject[:256]}}]]}
+    markup = {"inline_keyboard": [[
+        {"text": "📋 Copy Subject", "copy_text": {"text": safe_subject}},
+        {"text": "✉️ Open Gmail Compose", "url": gmail_url},
+    ]]}
     return message, markup
 
 
@@ -68,5 +80,5 @@ def format_run_summary(scanned: int, accepted: int, priority: int, errors: int =
         "📚 RESEARCH-GAP SCAN COMPLETE\n\n"
         f"Papers scanned: {scanned}\nCandidates: {accepted}\nPriority targets: {priority}\n"
         f"Deep full-text analyzed: {deep_fulltext}\nVerified public contacts: {verified_contacts}\nErrors: {errors}\n\n"
-        "Check the candidate messages below for copy-ready outreach drafts."
+        "Candidate + copy-ready outreach drafts follow."
     )
