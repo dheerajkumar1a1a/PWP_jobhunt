@@ -7,7 +7,7 @@ from collections import defaultdict
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-USER_AGENT = "research-gap-agent/0.8 (academic discovery; respectful rate; no automated outreach)"
+USER_AGENT = "research-gap-agent/0.9 (academic discovery; respectful rate; no automated outreach)"
 TRANSIENT = {429, 500, 502, 503, 504}
 
 
@@ -22,11 +22,7 @@ def get_json(url: str, retries: int = 3):
             last = exc
             if exc.code not in TRANSIENT or attempt == retries - 1:
                 raise
-            retry_after = exc.headers.get("Retry-After") if exc.headers else None
-            try:
-                delay = min(12.0, float(retry_after)) if retry_after else min(12.0, 2.0 ** attempt)
-            except (TypeError, ValueError):
-                delay = min(12.0, 2.0 ** attempt)
+            delay = min(12.0, float(exc.headers.get("Retry-After", 0) or (2 ** attempt)))
             time.sleep(delay)
     raise last or RuntimeError("request failed")
 
@@ -42,7 +38,7 @@ def crossref_search(query: str, rows: int = 10) -> list[dict]:
     out = []
     for item in items:
         title = (item.get("title") or ["Untitled"])[0]
-        authors = [{"author": {"display_name": f"{a.get('given','')} {a.get('family','')}".strip()}, "institutions": [{"display_name": (a.get("affiliation") or [{}])[0].get("name", "") if a.get("affiliation") else ""}]} for a in item.get("author", [])]
+        authors = [{"author": {"display_name": f"{a.get('given','')} {a.get('family','')}".strip(), "id": None, "orcid": None}, "institutions": [{"display_name": (a.get("affiliation") or [{}])[0].get("name", "") if a.get("affiliation") else ""}]} for a in item.get("author", [])]
         out.append({
             "id": f"https://doi.org/{item.get('DOI')}" if item.get("DOI") else item.get("URL"),
             "doi": f"https://doi.org/{item.get('DOI')}" if item.get("DOI") else None,
@@ -60,11 +56,12 @@ def semantic_scholar_search(query: str, limit: int = 10) -> list[dict]:
     url = "https://api.semanticscholar.org/graph/v1/paper/search?query=" + quote(query) + "&limit=" + str(min(limit,10)) + "&fields=paperId,title,abstract,year,authors,externalIds,openAccessPdf,citationCount"
     try:
         items = get_json(url).get("data", [])
-    except Exception:
+    except Exception as exc:
+        print(f"semantic_scholar failed for {query!r}: {exc}")
         return []
     out = []
     for item in items:
-        authors = [{"author": {"display_name": a.get("name")}, "institutions": []} for a in item.get("authors", [])]
+        authors = [{"author": {"display_name": a.get("name"), "id": a.get("authorId"), "orcid": None}, "institutions": []} for a in item.get("authors", [])]
         abstract = item.get("abstract") or ""
         positions = defaultdict(list)
         for i, word in enumerate(abstract.split()):
@@ -79,6 +76,23 @@ def semantic_scholar_search(query: str, limit: int = 10) -> list[dict]:
             "primary_location": {"pdf": {"url": ((item.get("openAccessPdf") or {}).get("url"))}},
             "cited_by_count": item.get("citationCount", 0),
         })
+    return out
+
+
+def _enrich_openalex_authors(authorships: list[dict]) -> list[dict]:
+    out = []
+    for a in authorships or []:
+        author = a.get("author") or {}
+        profile = dict(author)
+        institutions = a.get("institutions") or []
+        profile_record = {
+            "name": profile.get("display_name"),
+            "author_id": profile.get("id"),
+            "orcid": profile.get("orcid"),
+            "profile_url": profile.get("id"),
+            "institution": (institutions[0].get("display_name") if institutions else ""),
+        }
+        out.append(profile_record)
     return out
 
 
@@ -103,6 +117,13 @@ def discover(query: str, per_query: int = 25) -> list[dict]:
                 continue
             seen.add(key)
             w["source_provider"] = provider
+            if provider == "openalex":
+                w["author_profiles"] = _enrich_openalex_authors(w.get("authorships", []))
+            else:
+                w["author_profiles"] = [
+                    {"name": (a.get("author") or {}).get("display_name"), "author_id": (a.get("author") or {}).get("id"), "orcid": (a.get("author") or {}).get("orcid"), "profile_url": None, "institution": (a.get("institutions") or [{}])[0].get("display_name", "")}
+                    for a in w.get("authorships", [])
+                ]
             works.append(w)
         time.sleep(1.0)
     return works
