@@ -8,6 +8,7 @@ from pathlib import Path
 
 import yaml
 
+from .draft_builder import build_email, build_pitch
 from .fulltext import find_public_pdf, fetch_public_text, locate_gap_sentences
 from .gap_engine import score_paper, to_dict
 from .researchers import aggregate_researchers
@@ -48,7 +49,6 @@ def load_scoring(cfg: dict, config_path: str) -> dict:
 
 
 def deep_analyze_record(record: dict, work: dict, capabilities: dict[str, bool]) -> dict:
-    """Re-score a promising paper from a publicly exposed PDF, when available."""
     initial = float(record.get("score", 0))
     if initial < 30:
         return record
@@ -72,6 +72,24 @@ def deep_analyze_record(record: dict, work: dict, capabilities: dict[str, bool])
     }
 
 
+def add_drafts(targets: list[dict], project_name: str) -> list[dict]:
+    out = []
+    for t in targets:
+        item = dict(t)
+        papers = list(item.get("papers", []))
+        p = papers[0] if papers else {}
+        gaps = p.get("gaps") or []
+        g = gaps[0] if gaps else {}
+        evidence = g.get("evidence") or "No paper-level gap evidence was extracted; manual verification is required."
+        gap_type = g.get("gap_type", "methodological_constraint")
+        capability = g.get("capability", "project capability")
+        item["draft_pitch"] = build_pitch(item.get("author_name", "Researcher"), p.get("title", "Untitled"), evidence, gap_type, capability, project_name)
+        item["draft_email"] = build_email(item.get("author_name", "Researcher"), p.get("title", "Untitled"), evidence, gap_type, capability, project_name)
+        item["draft_review_status"] = "pending"
+        out.append(item)
+    return out
+
+
 def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: str = "out/research_gap_report.md"):
     cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8")) or {}
     scoring = load_scoring(cfg, config_path)
@@ -88,6 +106,8 @@ def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: s
     errors = 0
     search_cfg = cfg.get("search") or {}
     per_query = min(25, int(search_cfg.get("max_results_per_query", 25)))
+    deep_limit = int(search_cfg.get("deep_fulltext_limit", 12))
+    deep_count = 0
 
     for q in search_cfg.get("seed_queries", []):
         works = discover(q, per_query)
@@ -105,23 +125,28 @@ def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: s
             score, gaps = score_paper(title, abstract, capabilities)
             authors = [{"name": a.get("author", {}).get("display_name"), "institution": (a.get("institutions") or [{}])[0].get("display_name")} for a in w.get("authorships", [])]
             record = {"id": pid, "doi": w.get("doi"), "title": title, "score": score, "authors": authors, "gaps": [to_dict(g) for g in gaps], "source_provider": w.get("source_provider"), "year": w.get("publication_year"), "citations": w.get("cited_by_count", 0)}
-            if len(papers) < int((cfg.get("search") or {}).get("deep_fulltext_limit", 20)):
+            if deep_count < deep_limit and score >= 30:
                 record = deep_analyze_record(record, w, capabilities)
+                deep_count += 1
             papers.append(record)
             conn.execute("INSERT OR REPLACE INTO papers VALUES (?,?,?,?,?,?,?,?,?)", (pid, w.get("doi"), title, w.get("publication_year"), w.get("cited_by_count", 0), record["score"], json.dumps(record["gaps"]), json.dumps(authors), json.dumps({**w, "fulltext_url": record.get("fulltext_url")})))
 
     min_score = float(scoring.get("minimum_target_score", 70))
     targets = aggregate_researchers(papers, min_score)[:int((cfg.get("outreach") or {}).get("max_candidates", 10))]
+    targets = add_drafts(targets, (cfg.get("project") or {}).get("title", "research project"))
     render_markdown(targets, report_path)
+
     conn.execute("CREATE TABLE IF NOT EXISTS researcher_targets(author_name TEXT PRIMARY KEY, affiliations_json TEXT, paper_count INTEGER, researcher_score REAL, papers_json TEXT, review_status TEXT DEFAULT 'pending')")
     for t in targets:
         conn.execute("INSERT OR REPLACE INTO researcher_targets VALUES (?,?,?,?,?,?)", (t["author_name"], json.dumps(t["affiliations"]), t["paper_count"], t["researcher_score"], json.dumps(t["papers"]), "pending"))
+        primary = (t.get("papers") or [{}])[0]
+        conn.execute("INSERT INTO drafts VALUES (?,?,?,?,?)", (primary.get("doi") or primary.get("title"), t["author_name"], t.get("draft_pitch", ""), t.get("draft_email", ""), "pending"))
     conn.commit(); conn.close()
 
     priority_cutoff = float(scoring.get("priority_score", 80))
     priority = sum(1 for t in targets if float(t["researcher_score"]) >= priority_cutoff)
     publish_metrics(len(seen), len(targets), priority, errors)
-    print(f"Scanned {len(seen)} unique works; {len(targets)} researcher targets >= {min_score}. Priority: {priority}. Query errors: {errors}. Report: {report_path}")
+    print(f"Scanned {len(seen)} unique works; {len(targets)} researcher targets >= {min_score}. Priority: {priority}. Query errors: {errors}. Deep full-text: {deep_count}. Report: {report_path}")
 
 
 if __name__ == "__main__":
