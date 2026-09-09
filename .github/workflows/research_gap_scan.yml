@@ -18,10 +18,14 @@ jobs:
           python-version: "3.12"
       - name: Install dependencies
         run: pip install -r requirements.txt
+      - name: Run unit tests
+        run: pytest research_gap_agent/tests -q
       - name: Run discovery scan
-        run: python -m research_gap_agent.cli scan --config research_gap_agent/config/technology_spec.yaml --db research_gap.db
-      - name: Upload review database
+        run: python -m research_gap_agent.cli scan --config research_gap_agent/config/technology_spec.yaml --db data/research_gap.db --report out/research_gap_report.md
+      - name: Upload review package
         uses: actions/upload-artifact@v4
         with:
-          name: research-gap-results
-          path: research_gap.db
+          name: research-gap-review
+          path: |
+            data/research_gap.db
+            out/research_gap_report.md
