@@ -3,8 +3,6 @@ name: daily job digest
 on:
   schedule:
     # 06:00 IST, weekdays. IST is UTC+5:30, so 06:00 IST == 00:30 UTC.
-    # GitHub's scheduler is best-effort and can lag by several minutes under
-    # load — that is fine for a job digest, do not tighten it.
     - cron: "30 0 * * 1-5"
   workflow_dispatch:
     inputs:
@@ -13,28 +11,22 @@ on:
         type: boolean
         default: false
 
-# Two runs sharing one dedupe store would race. Queue them instead.
 concurrency:
   group: jobhunt-daily
   cancel-in-progress: false
 
 permissions:
-  contents: read         # nothing is pushed back; the store lives in the cache
+  contents: read
 
 jobs:
   digest:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Restore the dedupe store
-        # seen.json is what stops you being emailed the same job twice, so it
-        # has to survive between runs. It is NOT committed: it is personal, and
-        # a seen.json in the repo would mark every job as seen for anyone who
-        # clones it. Cache entries are immutable, so the key is unique per run
-        # and restore-keys pulls the most recent one forward.
         uses: actions/cache@v4
         with:
           path: seen.json
@@ -51,18 +43,19 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Write profile.json
-        # profile.json is gitignored (it is derived from your resume), so CI
-        # gets it from a secret. Create it locally with
-        #   python -m jobhunt profile --resume resume.pdf
-        # then paste the file contents into the PROFILE_JSON repo secret.
+        # PROFILE_JSON is preferred. When absent, use the GitHub-derived seed
+        # profile shipped in the repo. Replace it with a resume-derived secret
+        # once exact years/education/seniority should influence scoring.
         env:
           PROFILE_JSON: ${{ secrets.PROFILE_JSON }}
         run: |
-          if [ -z "$PROFILE_JSON" ]; then
-            echo "::error::PROFILE_JSON secret is empty — see the README"
-            exit 1
+          if [ -n "$PROFILE_JSON" ]; then
+            printf '%s' "$PROFILE_JSON" > profile.json
+            echo "Using PROFILE_JSON secret"
+          else
+            cp profile.github_seed.json profile.json
+            echo "Using profile.github_seed.json"
           fi
-          printf '%s' "$PROFILE_JSON" > profile.json
           python -c "import json;json.load(open('profile.json'));print('profile.json parsed OK')"
 
       - name: Run the pipeline
@@ -81,7 +74,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python .github/scripts/notify_telegram.py --top 5
+        run: python .github/scripts/notify_telegram.py --top 7 --threshold 7.5
 
       - name: Upload digest
         if: always()
