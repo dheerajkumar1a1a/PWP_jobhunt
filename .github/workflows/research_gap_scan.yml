@@ -11,6 +11,10 @@ permissions:
 jobs:
   scan:
     runs-on: ubuntu-latest
+    env:
+      TELEGRAM_ENABLED: ${{ vars.TELEGRAM_ENABLED || 'false' }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,6 +26,21 @@ jobs:
         run: pytest research_gap_agent/tests -q
       - name: Run discovery scan
         run: python -m research_gap_agent.cli scan --config research_gap_agent/config/technology_spec.yaml --db data/research_gap.db --report out/research_gap_report.md
+      - name: Notify Telegram
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          from research_gap_agent.telegram import send_message, format_run_summary
+          enabled = os.getenv('TELEGRAM_ENABLED','false').lower() == 'true'
+          if enabled:
+              send_message(format_run_summary(
+                  scanned=os.getenv('RG_SCANNED','0'),
+                  accepted=os.getenv('RG_CANDIDATES','0'),
+                  priority=os.getenv('RG_PRIORITY','0'),
+                  errors=0,
+              ))
+          PY
       - name: Upload review package
         uses: actions/upload-artifact@v4
         with:
