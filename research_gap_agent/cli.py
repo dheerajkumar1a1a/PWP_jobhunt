@@ -12,6 +12,7 @@ from .author_enrichment import enrich_author
 from .draft_builder import build_email, build_pitch
 from .fulltext import find_public_pdf, fetch_public_text, locate_gap_sentences
 from .gap_engine import score_paper, to_dict
+from .openrouter_free import analyze_gap, draft_email as llm_draft_email
 from .researchers import aggregate_researchers
 from .review_report import render_markdown
 from .scholarly import discover
@@ -25,8 +26,8 @@ def abstract_text(work):
     return " ".join(t for _, t in sorted(words))
 
 
-def publish_metrics(scanned: int, targets: int, priority: int, errors: int, deep_count: int, verified_contacts: int):
-    values = {"RG_SCANNED": scanned, "RG_CANDIDATES": targets, "RG_PRIORITY": priority, "RG_ERRORS": errors, "RG_DEEP_FULLTEXT": deep_count, "RG_VERIFIED_CONTACTS": verified_contacts}
+def publish_metrics(scanned: int, targets: int, priority: int, errors: int, deep_count: int, verified_contacts: int, llm_count: int):
+    values = {"RG_SCANNED": scanned, "RG_CANDIDATES": targets, "RG_PRIORITY": priority, "RG_ERRORS": errors, "RG_DEEP_FULLTEXT": deep_count, "RG_VERIFIED_CONTACTS": verified_contacts, "RG_LLM_ANALYZED": llm_count}
     env_file = os.getenv("GITHUB_ENV")
     if env_file:
         with open(env_file, "a", encoding="utf-8") as f:
@@ -49,42 +50,61 @@ def load_scoring(cfg: dict, config_path: str) -> dict:
     return scoring
 
 
-def deep_analyze_record(record: dict, work: dict, capabilities: dict[str, bool]) -> dict:
-    initial = float(record.get("score", 0))
-    if initial < 30:
-        return record
-    location = work.get("primary_location") or {}
-    pdf_url = find_public_pdf(work.get("doi"), location)
-    if not pdf_url:
-        return record
-    text = fetch_public_text(pdf_url)
-    if not text:
-        return {**record, "fulltext_url": pdf_url, "fulltext_status": "unreadable"}
-    score, gaps = score_paper(record["title"], text[:120000], capabilities)
-    evidence = locate_gap_sentences(text)
-    gap_dicts = [to_dict(g) for g in gaps]
+def llm_project(cfg: dict) -> dict:
     return {
-        **record,
-        "score": max(initial, score),
-        "gaps": gap_dicts or record.get("gaps", []),
-        "fulltext_url": pdf_url,
-        "fulltext_status": "analyzed",
-        "fulltext_gap_sentences": evidence,
+        "name": (cfg.get("project") or {}).get("name") or (cfg.get("project") or {}).get("title") or "research project",
+        "objective": (cfg.get("project") or {}).get("objective", ""),
+        "capabilities": (cfg.get("capabilities") or {}) or (cfg.get("project") or {}).get("capabilities", {}),
+        "validation": (cfg.get("validation") or {}) or (cfg.get("project") or {}).get("evidence", {}),
     }
 
 
-def add_drafts_and_contacts(targets: list[dict], project_name: str) -> tuple[list[dict], int]:
+def deep_analyze_record(record: dict, work: dict, capabilities: dict[str, bool], cfg: dict) -> tuple[dict, bool]:
+    initial = float(record.get("score", 0))
+    if initial < 30:
+        return record, False
+    location = work.get("primary_location") or {}
+    pdf_url = find_public_pdf(work.get("doi"), location)
+    if not pdf_url:
+        return record, False
+    text = fetch_public_text(pdf_url)
+    if not text:
+        return {**record, "fulltext_url": pdf_url, "fulltext_status": "unreadable"}, False
+    clipped = text[:120000]
+    score, gaps = score_paper(record["title"], clipped, capabilities)
+    evidence = locate_gap_sentences(clipped)
+    gap_dicts = [to_dict(g) for g in gaps]
+    updated = {**record, "score": max(initial, score), "gaps": gap_dicts or record.get("gaps", []), "fulltext_url": pdf_url, "fulltext_status": "analyzed", "fulltext_gap_sentences": evidence}
+    llm = analyze_gap(llm_project(cfg), {"title": record["title"], "doi": record.get("doi"), "year": record.get("year"), "citations": record.get("citations", 0)}, "\n".join(evidence[:6]))
+    if llm and not bool(llm.get("reject")) and float(llm.get("confidence", 0)) >= 0.60:
+        updated["llm_gap_analysis"] = llm
+        updated["gaps"] = [{
+            "gap_type": "llm_assessed",
+            "evidence": llm.get("gap_statement") or (evidence[0] if evidence else ""),
+            "capability": llm.get("capability_match") or "",
+            "bridge": llm.get("bridge") or "",
+            "gap_strength": float(llm.get("evidence_strength", 0)),
+            "capability_strength": float(llm.get("evidence_strength", 0)),
+            "bridge_strength": float(llm.get("confidence", 0)),
+            "score": round(max(initial, score) + 5.0 * float(llm.get("confidence", 0)), 2),
+        }] + updated.get("gaps", [])
+        updated["score"] = max(float(updated["score"]), max(initial, score))
+        return updated, True
+    return updated, False
+
+
+def add_drafts_and_contacts(targets: list[dict], project_name: str, cfg: dict) -> tuple[list[dict], int, int]:
     out = []
     verified_count = 0
+    llm_count = 0
     for t in targets:
         item = dict(t)
         merged: dict[str, dict] = {}
         for p in item.get("papers", []):
             for author in p.get("authors", []):
                 name = (author.get("name") or "").strip()
-                if not name:
-                    continue
-                merged.setdefault(name, author)
+                if name:
+                    merged.setdefault(name, author)
         enriched = [enrich_author(a) for a in merged.values()]
         verified = [a for a in enriched if a.get("verified_public_institutional") and a.get("public_email")]
         item["authors_enriched"] = enriched
@@ -101,9 +121,19 @@ def add_drafts_and_contacts(targets: list[dict], project_name: str) -> tuple[lis
         capability = g.get("capability", "project capability")
         item["draft_pitch"] = build_pitch(item.get("author_name", "Researcher"), p.get("title", "Untitled"), evidence, gap_type, capability, project_name)
         item["draft_email"] = build_email(item.get("author_name", "Researcher"), p.get("title", "Untitled"), evidence, gap_type, capability, project_name)
+        if os.getenv("OPENROUTER_API_KEY", "").strip() and os.getenv("OPENROUTER_ENABLED", "true").lower() in {"1", "true", "yes", "on"}:
+            llm_email = llm_draft_email(
+                llm_project(cfg),
+                {"name": item.get("author_name"), "affiliation": item.get("affiliations", []), "public_email": item.get("public_email")},
+                p,
+                g,
+            )
+            if llm_email:
+                item["draft_email"] = llm_email.strip()
+                llm_count += 1
         item["draft_review_status"] = "pending"
         out.append(item)
-    return out, verified_count
+    return out, verified_count, llm_count
 
 
 def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: str = "out/research_gap_report.md"):
@@ -125,6 +155,7 @@ def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: s
     per_query = min(25, int(search_cfg.get("max_results_per_query", 25)))
     deep_limit = int(search_cfg.get("deep_fulltext_limit", 12))
     deep_count = 0
+    llm_count = 0
 
     for q in search_cfg.get("seed_queries", []):
         try:
@@ -148,14 +179,16 @@ def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: s
             authors = w.get("author_profiles") or [{"name": a.get("author", {}).get("display_name"), "institution": (a.get("institutions") or [{}])[0].get("display_name")} for a in w.get("authorships", [])]
             record = {"id": pid, "doi": w.get("doi"), "title": title, "score": score, "authors": authors, "gaps": [to_dict(g) for g in gaps], "source_provider": w.get("source_provider"), "year": w.get("publication_year"), "citations": w.get("cited_by_count", 0)}
             if deep_count < deep_limit and score >= 30:
-                record = deep_analyze_record(record, w, capabilities)
+                record, used_llm = deep_analyze_record(record, w, capabilities, cfg)
                 deep_count += 1
+                llm_count += int(used_llm)
             papers.append(record)
-            conn.execute("INSERT OR REPLACE INTO papers VALUES (?,?,?,?,?,?,?,?,?)", (pid, w.get("doi"), title, w.get("publication_year"), w.get("cited_by_count", 0), record["score"], json.dumps(record["gaps"]), json.dumps(authors), json.dumps({**w, "fulltext_url": record.get("fulltext_url"), "fulltext_status": record.get("fulltext_status")})))
+            conn.execute("INSERT OR REPLACE INTO papers VALUES (?,?,?,?,?,?,?,?,?)", (pid, w.get("doi"), title, w.get("publication_year"), w.get("cited_by_count", 0), record["score"], json.dumps(record["gaps"]), json.dumps(authors), json.dumps({**w, "fulltext_url": record.get("fulltext_url"), "fulltext_status": record.get("fulltext_status"), "llm_gap_analysis": record.get("llm_gap_analysis")})))
 
     min_score = float(scoring.get("minimum_target_score", 70))
     targets = aggregate_researchers(papers, min_score)[:int((cfg.get("outreach") or {}).get("max_candidates", 10))]
-    targets, verified_contacts = add_drafts_and_contacts(targets, (cfg.get("project") or {}).get("name", "research project"))
+    targets, verified_contacts, llm_draft_count = add_drafts_and_contacts(targets, (cfg.get("project") or {}).get("name", "research project"), cfg)
+    llm_count += llm_draft_count
     render_markdown(targets, report_path)
 
     for t in targets:
@@ -169,8 +202,8 @@ def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: s
 
     priority_cutoff = float(scoring.get("priority_score", 80))
     priority = sum(1 for t in targets if float(t["researcher_score"]) >= priority_cutoff)
-    publish_metrics(len(seen), len(targets), priority, errors, deep_count, verified_contacts)
-    print(f"Scanned {len(seen)} unique works; {len(targets)} researcher targets >= {min_score}. Priority: {priority}. Verified public contacts: {verified_contacts}. Query errors: {errors}. Deep full-text: {deep_count}. Report: {report_path}")
+    publish_metrics(len(seen), len(targets), priority, errors, deep_count, verified_contacts, llm_count)
+    print(f"Scanned {len(seen)} unique works; {len(targets)} researcher targets >= {min_score}. Priority: {priority}. Verified public contacts: {verified_contacts}. Query errors: {errors}. Deep full-text: {deep_count}. OpenRouter free LLM uses: {llm_count}. Report: {report_path}")
 
 
 if __name__ == "__main__":
