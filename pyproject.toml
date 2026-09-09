@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pwp-jobhunt-research-gap-agent"
+version = "0.3.0"
+description = "Free-first research-gap internship discovery agent"
+requires-python = ">=3.10"
+dependencies = [
+  "PyYAML>=6.0",
+  "requests>=2.31",
+]
+
+[tool.setuptools.packages.find]
+include = ["research_gap_agent*"]
