@@ -32,7 +32,11 @@ def render_markdown(targets: list[dict], output: str = "out/research_gap_report.
                     f"**Gap strength:** {g.get('gap_strength', 0):.2f} | **Capability:** {g.get('capability_strength', 0):.2f} | **Bridge:** {g.get('bridge_strength', 0):.2f}",
                     "",
                 ]
-        lines += ["> Verify the original paper, the exact limitation, author identity/affiliation, public institutional contact, and proposed experiment before outreach.", ""]
+        pitch = t.get("draft_pitch")
+        email = t.get("draft_email")
+        if pitch or email:
+            lines += ["### Draft outreach", "", "**Executive pitch:**", "", pitch or "(not generated)", "", "**Email draft:**", "", "```text", email or "(not generated)", "```", ""]
+        lines += ["> Verify the original paper, exact limitation, author identity/affiliation, public institutional contact, and proposed experiment before outreach.", ""]
     text = "\n".join(lines)
     Path(output).parent.mkdir(parents=True, exist_ok=True)
     Path(output).write_text(text, encoding="utf-8")
