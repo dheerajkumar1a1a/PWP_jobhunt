@@ -1,11 +1,13 @@
-# Core — needed for `run --mock --scorer keyword` (no API key required).
+# Core jobhunt + research-gap dependencies.
 requests>=2.31
 PyYAML>=6.0
 pypdf>=5.0
 
-# Only needed if you point a stage at Anthropic (the default provider).
-# Gemini, Groq, OpenAI-compatible and Ollama all go over plain `requests`,
-# so you can delete this line and still use those.
+# Official Python JobSpy adapter. Keep CI on Python 3.10-3.12.
+python-jobspy==1.1.82
+pandas>=2.0
+
+# Only needed if you point a stage at Anthropic.
 anthropic>=0.40
 
 # Tests
