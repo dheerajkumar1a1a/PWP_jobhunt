@@ -1,0 +1,50 @@
+project:
+  title: "Non-Destructive Differential Optical Colorimetry for Comparative Pungency Classification of Onion Layers"
+  capabilities:
+    - non_destructive
+    - smartphone_based
+    - low_cost
+    - portable
+    - fixed_sample_distance
+    - irregular_object_segmentation
+    - cpu_only
+    - fast_processing
+    - differential_colorimetry
+    - cielab
+    - delta_e
+    - biochemical_gradient_correlation
+    - comparative_pungency_classification
+  evidence:
+    absolute_lab_r2: {L: 0.9907, a: 0.9959, b: 0.9912}
+    differential_r2: 0.9971
+    pyruvate_range_umol_g: [2.20, 3.80]
+    calibration_r2: 0.8977
+    segmentation_threshold: 174.900
+search:
+  seed_queries:
+    - "onion pungency pyruvic acid colorimetry"
+    - "onion pungency non destructive optical sensing"
+    - "onion quality smartphone imaging color"
+    - "CIELAB onion pungency"
+    - "smartphone colorimetry agricultural quality"
+  sources: [crossref, openalex, semantic_scholar]
+  max_results_per_query: 100
+  years_back: 25
+scoring:
+  weights:
+    research_gap: 35
+    capability_match: 30
+    experimental_bridge: 15
+    application_value: 10
+    author_continuity: 10
+  minimum_target_score: 70
+contacts:
+  only_public_institutional: true
+  never_guess_email: true
+outreach:
+  max_candidates: 10
+  require_human_approval: true
+  auto_send: false
+storage:
+  sqlite: data/research_gap.db
+  report: out/research_gap_report.md
