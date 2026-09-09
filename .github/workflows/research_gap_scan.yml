@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONPATH: ${{ github.workspace }}
-      TELEGRAM_ENABLED: ${{ vars.TELEGRAM_ENABLED || 'false' }}
+      TELEGRAM_ENABLED: ${{ vars.TELEGRAM_ENABLED || 'true' }}
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
@@ -36,13 +36,18 @@ jobs:
           import json
           from research_gap_agent.telegram import send_message, format_run_summary, format_candidate
 
-          enabled = os.getenv('TELEGRAM_ENABLED','false').lower() == 'true'
+          token = os.getenv('TELEGRAM_BOT_TOKEN','').strip()
+          chat_id = os.getenv('TELEGRAM_CHAT_ID','').strip()
+          enabled = os.getenv('TELEGRAM_ENABLED','true').lower() == 'true' and bool(token and chat_id)
           if not enabled:
+              print('Telegram disabled or secrets missing; skipping notification.')
               raise SystemExit(0)
+
           scanned = os.getenv('RG_SCANNED','0')
           candidates = os.getenv('RG_CANDIDATES','0')
           priority = os.getenv('RG_PRIORITY','0')
           send_message(format_run_summary(scanned, candidates, priority))
+
           db = 'data/research_gap.db'
           if os.path.exists(db):
               conn = sqlite3.connect(db)
