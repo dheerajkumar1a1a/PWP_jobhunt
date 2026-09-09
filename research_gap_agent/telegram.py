@@ -43,7 +43,8 @@ def format_candidate(name: str, affiliation: str, paper: str, score: float, gap:
             "Action: review in GitHub; do not auto-send outreach.")
 
 
-def format_run_summary(scanned: int, accepted: int, priority: int, errors: int = 0) -> str:
+def format_run_summary(scanned: int, accepted: int, priority: int, errors: int = 0, deep_fulltext: int = 0, verified_contacts: int = 0) -> str:
     return ("📚 Research-gap scan complete\n\n"
-            f"Papers scanned: {scanned}\nCandidates: {accepted}\nPriority targets: {priority}\nErrors: {errors}\n\n"
+            f"Papers scanned: {scanned}\nCandidates: {accepted}\nPriority targets: {priority}\n"
+            f"Deep full-text analyzed: {deep_fulltext}\nVerified public contacts: {verified_contacts}\nErrors: {errors}\n\n"
             "Open the GitHub artifact/report for review.")
