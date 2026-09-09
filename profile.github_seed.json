@@ -1,0 +1,61 @@
+{
+  "name": "Dheeraj Kumar",
+  "current_title": "Data Science & Automation Engineer",
+  "years_experience": null,
+  "core_skills": [
+    "Python",
+    "data analysis",
+    "data science",
+    "machine learning",
+    "computer vision",
+    "OpenCV",
+    "YOLO",
+    "object detection",
+    "object tracking",
+    "image processing",
+    "time series forecasting",
+    "statistical analysis",
+    "LLM applications",
+    "AI automation",
+    "chatbots",
+    "GitHub Actions",
+    "Next.js",
+    "Cloudflare Workers",
+    "Ollama"
+  ],
+  "domains": [
+    "data science",
+    "machine learning",
+    "computer vision",
+    "time series forecasting",
+    "AI and LLM applications",
+    "automation engineering",
+    "research and analytics"
+  ],
+  "notable_projects": [
+    "Shimla potato retail price forecasting project with an arXiv-ready research workflow",
+    "Tomato retail-price analysis projects for Ranchi and Chennai",
+    "Computer-vision projects covering localization, tracking, vehicle counting, YOLO and object/pose detection",
+    "LLM and multimodal projects including chatbot and chat-with-images applications",
+    "Automated portfolio publishing pipeline using Next.js, Cloudflare Workers, Ollama and GitHub Actions",
+    "Algorithmic trading bot project and related analytics work"
+  ],
+  "education": "",
+  "target_titles": [
+    "Data Analyst",
+    "Data Science Analyst",
+    "Data Scientist",
+    "Machine Learning Engineer",
+    "AI/ML Engineer",
+    "Applied AI Engineer",
+    "Computer Vision Engineer",
+    "Computer Vision Developer",
+    "AI Automation Engineer",
+    "Automation Engineer",
+    "Python Developer",
+    "Research Analyst",
+    "Research Engineer"
+  ],
+  "seniority": "unknown",
+  "profile_source": "Initial profile inferred from the candidate's public GitHub portfolio/projects. Replace with resume-derived profile for exact years of experience, education and seniority."
+}
