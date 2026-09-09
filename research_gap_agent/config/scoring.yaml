@@ -1,0 +1,29 @@
+weights:
+  gap_evidence: 30
+  capability_coverage: 25
+  experimental_bridge: 20
+  researcher_ownership: 10
+  application_impact: 10
+  contactability: 5
+rules:
+  gap_evidence:
+    explicit_limitation: 1.0
+    future_work_or_need: 0.9
+    methodological_constraint: 0.8
+    inferred_only: 0.3
+    absent: 0.0
+  capability_coverage:
+    direct: 1.0
+    plausible_extension: 0.6
+    weak: 0.25
+  hard_reject:
+    - "no identifiable research gap"
+    - "title/keyword similarity only"
+    - "no meaningful baseline capability match"
+    - "author affiliation unresolved"
+    - "contact only from non-public/private source"
+thresholds:
+  priority: 80
+  promising: 65
+  exploratory: 50
+  reject: 49
