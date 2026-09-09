@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import time
 from pathlib import Path
@@ -14,7 +15,7 @@ from .gap_engine import score_paper, to_dict
 from .researchers import aggregate_researchers
 from .review_report import render_markdown
 
-USER_AGENT = "research-gap-agent/0.2 (academic discovery; conservative rate; no automated outreach)"
+USER_AGENT = "research-gap-agent/0.3 (academic discovery; conservative rate; no automated outreach)"
 
 
 def get_json(url: str):
@@ -34,9 +35,19 @@ def abstract_text(work):
     return " ".join(t for _, t in sorted(words))
 
 
+def publish_metrics(scanned: int, targets: int, priority: int):
+    values = {"RG_SCANNED": scanned, "RG_CANDIDATES": targets, "RG_PRIORITY": priority}
+    env_file = os.getenv("GITHUB_ENV")
+    if env_file:
+        with open(env_file, "a", encoding="utf-8") as f:
+            for key, value in values.items():
+                f.write(f"{key}={value}\n")
+
+
 def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: str = "out/research_gap_report.md"):
     cfg = yaml.safe_load(Path(config_path).read_text(encoding="utf-8"))
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(report_path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.execute("CREATE TABLE IF NOT EXISTS papers(id TEXT PRIMARY KEY, doi TEXT, title TEXT, year INTEGER, citations INTEGER, score REAL, gap_json TEXT, authors_json TEXT, raw_json TEXT)")
     conn.execute("CREATE TABLE IF NOT EXISTS contacts(paper_id TEXT, author_name TEXT, affiliation TEXT, public_email TEXT, verification_url TEXT, review_status TEXT DEFAULT 'pending')")
@@ -54,33 +65,24 @@ def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: s
             title = w.get("title") or "Untitled"
             abstract = abstract_text(w)
             score, gaps = score_paper(title, abstract, capabilities)
-            authors = [
-                {"name": a.get("author", {}).get("display_name"), "institution": (a.get("institutions") or [{}])[0].get("display_name")}
-                for a in w.get("authorships", [])
-            ]
+            authors = [{"name": a.get("author", {}).get("display_name"), "institution": (a.get("institutions") or [{}])[0].get("display_name")} for a in w.get("authorships", [])]
             record = {"id": pid, "doi": w.get("doi"), "title": title, "score": score, "authors": authors, "gaps": [to_dict(g) for g in gaps]}
             papers.append(record)
-            conn.execute(
-                "INSERT OR REPLACE INTO papers VALUES (?,?,?,?,?,?,?,?,?)",
-                (pid, w.get("doi"), title, w.get("publication_year"), w.get("cited_by_count", 0), score, json.dumps(record["gaps"]), json.dumps(authors), json.dumps(w)),
-            )
+            conn.execute("INSERT OR REPLACE INTO papers VALUES (?,?,?,?,?,?,?,?,?)", (pid, w.get("doi"), title, w.get("publication_year"), w.get("cited_by_count", 0), score, json.dumps(record["gaps"]), json.dumps(authors), json.dumps(w)))
         time.sleep(0.25)
 
     min_score = float(cfg["scoring"].get("minimum_target_score", 70))
-    targets = aggregate_researchers(papers, min_score)
-    max_candidates = int(cfg["outreach"].get("max_candidates", 10))
-    targets = targets[:max_candidates]
+    targets = aggregate_researchers(papers, min_score)[:int(cfg["outreach"].get("max_candidates", 10))]
     report_path = render_markdown(targets, report_path)
-
     conn.execute("CREATE TABLE IF NOT EXISTS researcher_targets(author_name TEXT PRIMARY KEY, affiliations_json TEXT, paper_count INTEGER, researcher_score REAL, papers_json TEXT, review_status TEXT DEFAULT 'pending')")
     for t in targets:
-        conn.execute(
-            "INSERT OR REPLACE INTO researcher_targets VALUES (?,?,?,?,?,?)",
-            (t["author_name"], json.dumps(t["affiliations"]), t["paper_count"], t["researcher_score"], json.dumps(t["papers"]), "pending"),
-        )
-    conn.commit()
-    conn.close()
-    print(f"Scanned {len(seen)} unique works; {len(targets)} researcher targets >= {min_score}. Report: {report_path}")
+        conn.execute("INSERT OR REPLACE INTO researcher_targets VALUES (?,?,?,?,?,?)", (t["author_name"], json.dumps(t["affiliations"]), t["paper_count"], t["researcher_score"], json.dumps(t["papers"]), "pending"))
+    conn.commit(); conn.close()
+
+    priority_cutoff = float(cfg["scoring"].get("priority_score", 80))
+    priority = sum(1 for t in targets if float(t["researcher_score"]) >= priority_cutoff)
+    publish_metrics(len(seen), len(targets), priority)
+    print(f"Scanned {len(seen)} unique works; {len(targets)} researcher targets >= {min_score}. Priority: {priority}. Report: {report_path}")
 
 
 if __name__ == "__main__":
