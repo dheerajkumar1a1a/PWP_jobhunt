@@ -1,0 +1,13 @@
+applicant:
+  name: "Dheeraj Kumar"
+  email: "Dheeraj6122002@gmail.com"
+  education: "IIT Kharagpur — BTech Agricultural and Food Engineering / MTech Food Process Engineering"
+  cgpa: "9.24/10"
+  research_experience:
+    - "Fully funded research internship — San Jose State University, USA"
+    - "Fully funded research internship — Purdue University, USA"
+    - "Fully funded research internship — Maejo University, Thailand"
+proposal:
+  internship_type: "stipend-based paid research internship"
+  collaboration: "implementation + experimental validation + potential co-authorship"
+  meeting_length_minutes: 15
