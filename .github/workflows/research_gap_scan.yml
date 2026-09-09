@@ -31,17 +31,32 @@ jobs:
         run: |
           python - <<'PY'
           import os
-          from research_gap_agent.telegram import send_message, format_run_summary
+          import sqlite3
+          from research_gap_agent.telegram import send_message, format_run_summary, format_candidate
+
           enabled = os.getenv('TELEGRAM_ENABLED','false').lower() == 'true'
-          if enabled:
-              send_message(format_run_summary(
-                  scanned=os.getenv('RG_SCANNED','0'),
-                  accepted=os.getenv('RG_CANDIDATES','0'),
-                  priority=os.getenv('RG_PRIORITY','0'),
-                  errors=0,
-              ))
+          if not enabled:
+              raise SystemExit(0)
+          scanned = os.getenv('RG_SCANNED','0')
+          candidates = os.getenv('RG_CANDIDATES','0')
+          priority = os.getenv('RG_PRIORITY','0')
+          send_message(format_run_summary(scanned, candidates, priority))
+          db = 'data/research_gap.db'
+          if os.path.exists(db):
+              conn = sqlite3.connect(db)
+              rows = conn.execute('SELECT author_name, affiliations_json, researcher_score, papers_json FROM researcher_targets ORDER BY researcher_score DESC LIMIT 3').fetchall()
+              conn.close()
+              for name, affiliations, score, papers_json in rows:
+                  import json
+                  affs = json.loads(affiliations or '[]')
+                  papers = json.loads(papers_json or '[]')
+                  aff = ', '.join(affs[:2]) if affs else 'Affiliation not resolved'
+                  paper = papers[0].get('title','') if papers else 'Paper not available'
+                  gap = (papers[0].get('gaps') or [{}])[0].get('evidence','') if papers else 'Gap evidence pending'
+                  send_message(format_candidate(name, aff, paper, float(score), gap))
           PY
       - name: Upload review package
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: research-gap-review
