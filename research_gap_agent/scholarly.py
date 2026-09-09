@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import time
 import urllib.error
+from collections import defaultdict
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
-USER_AGENT = "research-gap-agent/0.7 (academic discovery; respectful rate; no automated outreach)"
+USER_AGENT = "research-gap-agent/0.8 (academic discovery; respectful rate; no automated outreach)"
 TRANSIENT = {429, 500, 502, 503, 504}
 
 
@@ -21,7 +22,11 @@ def get_json(url: str, retries: int = 3):
             last = exc
             if exc.code not in TRANSIENT or attempt == retries - 1:
                 raise
-            delay = min(12.0, float(exc.headers.get("Retry-After", 0) or (2 ** attempt)))
+            retry_after = exc.headers.get("Retry-After") if exc.headers else None
+            try:
+                delay = min(12.0, float(retry_after)) if retry_after else min(12.0, 2.0 ** attempt)
+            except (TypeError, ValueError):
+                delay = min(12.0, 2.0 ** attempt)
             time.sleep(delay)
     raise last or RuntimeError("request failed")
 
@@ -52,7 +57,7 @@ def crossref_search(query: str, rows: int = 10) -> list[dict]:
 
 
 def semantic_scholar_search(query: str, limit: int = 10) -> list[dict]:
-    url = "https://api.semanticscholar.org/graph/v1/paper/search?query=" + quote(query) + "&limit=" + str(min(limit, 10)) + "&fields=paperId,title,abstract,year,authors,externalIds,openAccessPdf,citationCount"
+    url = "https://api.semanticscholar.org/graph/v1/paper/search?query=" + quote(query) + "&limit=" + str(min(limit,10)) + "&fields=paperId,title,abstract,year,authors,externalIds,openAccessPdf,citationCount"
     try:
         items = get_json(url).get("data", [])
     except Exception:
@@ -61,36 +66,43 @@ def semantic_scholar_search(query: str, limit: int = 10) -> list[dict]:
     for item in items:
         authors = [{"author": {"display_name": a.get("name")}, "institutions": []} for a in item.get("authors", [])]
         abstract = item.get("abstract") or ""
-        inv = {w: [i for i, _ in enumerate(abstract.split())] for i, w in enumerate(abstract.split())}
+        positions = defaultdict(list)
+        for i, word in enumerate(abstract.split()):
+            positions[word].append(i)
         out.append({
             "id": "s2:" + str(item.get("paperId")),
             "doi": ((item.get("externalIds") or {}).get("DOI")),
             "title": item.get("title") or "Untitled",
             "publication_year": item.get("year"),
             "authorships": authors,
-            "abstract_inverted_index": inv,
+            "abstract_inverted_index": dict(positions),
             "primary_location": {"pdf": {"url": ((item.get("openAccessPdf") or {}).get("url"))}},
             "cited_by_count": item.get("citationCount", 0),
         })
     return out
 
 
-def discover(query: str, per_query: int = 25) -> tuple[list[dict], dict[str, str]]:
-    """Try multiple free scholarly sources and return deduplicated works plus provenance."""
+def discover(query: str, per_query: int = 25) -> list[dict]:
+    """Return deduplicated works from several free scholarly sources."""
     works: list[dict] = []
-    provenance: dict[str, str] = {}
-    providers = [("openalex", lambda: openalex_search(query, per_query)), ("crossref", lambda: crossref_search(query, min(10, per_query))), ("semantic_scholar", lambda: semantic_scholar_search(query, min(10, per_query)))]
+    seen: set[str] = set()
+    providers = [
+        ("openalex", lambda: openalex_search(query, per_query)),
+        ("crossref", lambda: crossref_search(query, min(10, per_query))),
+        ("semantic_scholar", lambda: semantic_scholar_search(query, min(10, per_query))),
+    ]
     for provider, fn in providers:
         try:
             results = fn()
-        except Exception:
+        except Exception as exc:
+            print(f"{provider} failed for {query!r}: {exc}")
             results = []
         for w in results:
             key = (w.get("doi") or w.get("id") or w.get("title") or "").strip().lower()
-            if not key or key in provenance:
+            if not key or key in seen:
                 continue
-            provenance[key] = provider
+            seen.add(key)
             w["source_provider"] = provider
             works.append(w)
         time.sleep(1.0)
-    return works, provenance
+    return works
