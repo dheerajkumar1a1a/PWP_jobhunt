@@ -19,6 +19,7 @@ def aggregate_researchers(papers: list[dict], minimum_score: float = 70.0) -> li
                 "doi": paper.get("doi"),
                 "score": score,
                 "gaps": paper.get("gaps", []),
+                "authors": paper.get("authors", []),
             })
             if author.get("institution"):
                 g["affiliations"].add(author["institution"])

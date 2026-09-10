@@ -15,10 +15,20 @@ class GapResult:
     capability_strength: float
     bridge_strength: float
     score: float
+    explicit_limitation: bool = False
+
+
+# Papers without at least one explicit limitation/future-work sentence are
+# capped below the "promising" threshold: objective statements that merely
+# share vocabulary with our capabilities must stay exploratory.
+EXPLORATORY_CAP = 64.0
 
 
 GAP_PATTERNS = {
-    "destructive": [r"destructive", r"requires? (?:sample )?(?:extraction|juice|cutting|crushing)", r"destroy(?:s|ed|ing)? the sample"],
+    # (?<!non) guards: a paper describing ITSELF as "non-destructive" must not
+    # count as gap evidence of destructiveness (substring trap: "destructive"
+    # inside "non-destructively").
+    "destructive": [r"(?<!non)(?<!non-)destructive", r"requires? (?:sample )?(?:extraction|juice|cutting|crushing)", r"destroy(?:s|ed|ing)? the sample"],
     "laboratory": [r"laborator(?:y|ies)", r"spectrophotometer", r"chromatograph", r"reagent", r"chemical assay"],
     "slow": [r"time[- ]consuming", r"laborious", r"requires? (?:waiting|heating)", r"long (?:analysis|processing) time"],
     "manual": [r"manual", r"subjective", r"operator[- ]dependent", r"requires? (?:expert|skilled)"],
@@ -73,6 +83,7 @@ def extract_gap_evidence(text: str) -> list[str]:
 def score_paper(title: str, abstract: str, capabilities: dict[str, bool]) -> tuple[float, list[GapResult]]:
     text = f"{title}. {abstract}".strip()
     evidences = extract_gap_evidence(text)
+    has_explicit = any(_hits(s, GAP_PATTERNS["validation"]) for s in split_sentences(text))
     results: list[GapResult] = []
     for sentence in evidences:
         matched_gap_types = [k for k, pats in GAP_PATTERNS.items() if k != "validation" and _hits(sentence, pats)]
@@ -86,7 +97,10 @@ def score_paper(title: str, abstract: str, capabilities: dict[str, bool]) -> tup
         capability_strength = min(1.0, 0.60 + 0.08 * len(caps))
         bridge_strength = min(1.0, 0.55 + 0.10 * min(len(matched_gap_types), len(caps)))
         score = round(35 * gap_strength + 30 * capability_strength + 15 * bridge_strength + 10 * (1.0 if any(k in caps for k in ("agricultural_food_application", "comparative_classification")) else 0.4), 2)
-        results.append(GapResult(matched_gap_types[0], sentence, caps[0], f"Test the baseline capability '{caps[0]}' against the paper's '{matched_gap_types[0]}' constraint.", gap_strength, capability_strength, bridge_strength, score))
+        if not has_explicit:
+            score = min(score, EXPLORATORY_CAP)
+        explicit = bool(_hits(sentence, GAP_PATTERNS["validation"]))
+        results.append(GapResult(matched_gap_types[0], sentence, caps[0], f"Test the baseline capability '{caps[0]}' against the paper's '{matched_gap_types[0]}' constraint.", gap_strength, capability_strength, bridge_strength, score, explicit))
     results.sort(key=lambda r: r.score, reverse=True)
     return (results[0].score if results else 0.0), results[:5]
 

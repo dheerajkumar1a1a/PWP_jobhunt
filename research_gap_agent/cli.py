@@ -4,10 +4,12 @@ import argparse
 import json
 import os
 import sqlite3
+import time
 from pathlib import Path
 
 import yaml
 
+from .author_backfill import search_openalex_author
 from .author_enrichment import enrich_author
 from .draft_builder import build_email, build_pitch
 from .fulltext import find_public_pdf, fetch_public_text, locate_gap_sentences
@@ -109,6 +111,13 @@ def add_drafts_and_contacts(targets: list[dict], project_name: str, cfg: dict) -
         enriched = [enrich_author(a) for a in merged.values()]
         verified = [a for a in enriched if a.get("verified_public_institutional") and a.get("public_email")]
         item["authors_enriched"] = enriched
+        if not item.get("affiliations"):
+            match = search_openalex_author(item.get("author_name", ""))
+            if match:
+                insts = sorted({(i.get("display_name") or "").strip() for i in (match.get("last_known_institutions") or []) if (i.get("display_name") or "").strip()})
+                if insts:
+                    item["affiliations"] = insts
+            time.sleep(1.0)
         item["public_email"] = verified[0].get("public_email") if verified else None
         item["verification_url"] = verified[0].get("profile_url") if verified else None
         item["contact_verified"] = bool(verified)
