@@ -1,0 +1,100 @@
+name: Gmail Draft Test
+
+# Manual-only smoke test for the research-gap Gmail wiring.
+# Creates ONE real draft (never sends) to an address you choose, so you can
+# verify GOOGLE_* secrets + OAuth work without running a full scholar scan.
+
+on:
+  workflow_dispatch:
+    inputs:
+      to:
+        description: "Recipient of the test draft (draft only, never sent)"
+        required: true
+        default: "dheeraj6122002@gmail.com"
+      subject:
+        description: "Draft subject"
+        required: false
+        default: "Research-gap Gmail test - safe to delete"
+      body:
+        description: "Draft body (blank = default test text)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  draft-test:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+      GMAIL_ENABLED: "true"
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Gmail deps
+        run: python -m pip install google-api-python-client google-auth
+      - name: Create test Gmail draft
+        id: draft
+        run: |
+          python - <<'PY'
+          import os
+          from research_gap_agent.gmail_drafts import GmailConfig, create_draft, enabled
+
+          def out(key, value):
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+                  f.write(f"{key}={value}\n")
+
+          cfg = GmailConfig(
+              client_id=os.getenv("GOOGLE_CLIENT_ID", "").strip(),
+              client_secret=os.getenv("GOOGLE_CLIENT_SECRET", "").strip(),
+              refresh_token=os.getenv("GOOGLE_REFRESH_TOKEN", "").strip(),
+          )
+          if not enabled(cfg):
+              out("status", "misconfigured")
+              raise SystemExit("Gmail disabled or GOOGLE_CLIENT_ID/SECRET/REFRESH_TOKEN missing or blank. Check Actions secrets spelling.")
+          to = "${{ inputs.to }}".strip()
+          subject = "${{ inputs.subject }}".strip() or "Research-gap Gmail test - safe to delete"
+          body = "${{ inputs.body }}".strip() or "If you see this in your Drafts, the Gmail wiring works. Delete me."
+          try:
+              result = create_draft(to, subject, body, cfg)
+          except Exception as exc:
+              out("status", f"error: {exc}")
+              raise
+          out("status", "created")
+          out("draft_id", result.get("gmail_draft_id") or "")
+          out("thread_id", result.get("gmail_thread_id") or "")
+          print(f"Draft created: {result}")
+          PY
+      - name: Notify Telegram
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          from research_gap_agent.telegram import send_message
+          token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+          chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+          if not token or not chat_id:
+              print("Telegram secrets missing; skipping notification.")
+              raise SystemExit(0)
+          status = "${{ steps.draft.outputs.status }}"
+          if status == "created":
+              text = (
+                  "🧪 GMAIL DRAFT TEST: CREATED\n\n"
+                  f"To: ${{ inputs.to }}\n"
+                  f"Subject: ${{ inputs.subject }}\n"
+                  f"Draft ID: ${{ steps.draft.outputs.draft_id }}\n\n"
+                  "Check Gmail Drafts, then delete it."
+              )
+          else:
+              text = f"🧪 GMAIL DRAFT TEST: {status or 'unknown'}\n\nCheck the workflow logs."
+          ok = send_message(text)
+          print("telegram sent" if ok else "telegram send failed")
+          PY
