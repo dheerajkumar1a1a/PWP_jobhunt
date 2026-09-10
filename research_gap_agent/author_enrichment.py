@@ -21,7 +21,7 @@ def enrich_author(author: dict) -> dict:
     urls = candidate_profile_urls(author)
     backfilled = False
     if not urls and name:
-        urls, backfilled_institution = backfill_profile_urls(name, affiliation)
+        urls, backfilled_institution = backfill_profile_urls(name, affiliation, author.get("author_id"))
         backfilled = bool(urls)
         if not affiliation and backfilled_institution:
             affiliation = backfilled_institution
