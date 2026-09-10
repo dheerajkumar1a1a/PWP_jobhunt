@@ -115,12 +115,14 @@ def add_drafts_and_contacts(targets: list[dict], project_name: str, cfg: dict) -
             # in their OA papers, then their Europe PMC affiliation strings.
             target_author = merged.get(item.get("author_name", ""), {})
             affiliation = (item.get("affiliations") or [""])[0]
+            print(f"Profile verification failed for {item.get('author_name')}; trying OA correspondence fallback")
             hit = correspondence_from_oa_works(
                 item.get("author_name", ""),
                 target_author.get("author_id"),
                 affiliation,
             )
             if not hit:
+                print(f"OA correspondence found nothing for {item.get('author_name')}; trying Europe PMC fallback")
                 hit = europepmc_affiliation_email(
                     item.get("author_name", ""),
                     target_author.get("orcid"),

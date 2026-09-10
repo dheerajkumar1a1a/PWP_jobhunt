@@ -11,9 +11,13 @@ from .fulltext import extract_corresponding_email, fetch_public_text
 
 # Cap on PDF fetches per author: the fallback serves at most ~10 candidates,
 # so worst case is a few dozen polite requests per scan.
-OA_PDF_FETCH_CAP = 6
+OA_PDF_FETCH_CAP = 4
 # One-hop lab-site crawl budget per author (start pages + contact/people sub-pages).
-LAB_CRAWL_FETCH_CAP = 8
+LAB_CRAWL_FETCH_CAP = 5
+# Slow academic hosts must not stall the scan: profile pages get 12s, crawls 10s.
+PROFILE_FETCH_TIMEOUT = 12
+CRAWL_FETCH_TIMEOUT = 10
+OA_PDF_FETCH_TIMEOUT = 12
 CONTACT_SLUG_HINTS = (
     "contact", "contacts", "contact-us", "people", "team", "members", "member",
     "staff", "group", "about", "persons", "personnel", "kontakt", "equipe",
@@ -83,7 +87,7 @@ def correspondence_from_oa_works(name: str, author_id: str | None = None, affili
             return None
         for title, pdf_url in _oa_pdf_urls(match["id"])[:OA_PDF_FETCH_CAP]:
             try:
-                text = fetch_public_text(pdf_url)
+                text = fetch_public_text(pdf_url, timeout=OA_PDF_FETCH_TIMEOUT)
             except Exception:
                 continue
             finally:
@@ -129,7 +133,7 @@ def lab_contact_crawl(name: str, start_urls: list[str] | None, author_id: str | 
                 continue
             seen.add(key)
             try:
-                html = fetch_text(url)
+                html = fetch_text(url, timeout=CRAWL_FETCH_TIMEOUT)
             except Exception:
                 continue
             finally:

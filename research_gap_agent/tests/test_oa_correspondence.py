@@ -19,7 +19,7 @@ def _wire(monkeypatch, pdf_text, homepage="https://www.testuni.edu/"):
     monkeypatch.setattr(ae, "fetch_openalex_author", lambda aid: MATCH)
     monkeypatch.setattr(ae, "institution_homepage", lambda iid: homepage)
     monkeypatch.setattr(ae.scholarly, "get_json", lambda url, retries=3, headers=None: WORKS)
-    monkeypatch.setattr(ae, "fetch_public_text", lambda url: pdf_text)
+    monkeypatch.setattr(ae, "fetch_public_text", lambda url, timeout=20: pdf_text)
     monkeypatch.setattr(ae.time, "sleep", lambda s: None)
 
 

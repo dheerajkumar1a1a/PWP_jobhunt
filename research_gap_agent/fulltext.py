@@ -83,12 +83,12 @@ def extract_pdf_text(raw: bytes) -> str:
         return ""
 
 
-def fetch_public_text(url: str | None) -> str:
+def fetch_public_text(url: str | None, timeout: int = 20) -> str:
     """Fetch only explicitly public URLs; never bypasses a paywall."""
     if not url or not url.startswith(("http://", "https://")):
         return ""
     try:
-        raw, content_type = fetch_bytes(url)
+        raw, content_type = fetch_bytes(url, timeout=timeout)
     except OSError:
         # URLError, TimeoutError, ConnectionResetError, ...: a fulltext
         # fetch must never crash the scan.
