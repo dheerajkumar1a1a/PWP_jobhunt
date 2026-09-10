@@ -1,5 +1,8 @@
 # secrets
 .env
+client_secret*.json
+token*.json
+*refresh_token*
 
 # your actual resume and the profile derived from it
 resume.*

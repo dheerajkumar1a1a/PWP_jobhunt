@@ -36,6 +36,14 @@ def render_markdown(targets: list[dict], output: str = "out/research_gap_report.
         email = t.get("draft_email")
         if pitch or email:
             lines += ["### Draft outreach", "", "**Executive pitch:**", "", pitch or "(not generated)", "", "**Email draft:**", "", "```text", email or "(not generated)", "```", ""]
+        gmail_status = t.get("gmail_status")
+        if gmail_status:
+            lines += ["**Gmail draft status:** " + str(gmail_status)]
+            if t.get("gmail_draft_id"):
+                lines += [f"**Gmail draft ID:** {t.get('gmail_draft_id')}", f"**Gmail thread ID:** {t.get('gmail_thread_id') or 'n/a'}"]
+            elif t.get("public_email"):
+                lines += [f"**Recipient:** {t.get('public_email')}"]
+            lines += [""]
         lines += ["> Verify the original paper, exact limitation, author identity/affiliation, public institutional contact, and proposed experiment before outreach.", ""]
     text = "\n".join(lines)
     Path(output).parent.mkdir(parents=True, exist_ok=True)

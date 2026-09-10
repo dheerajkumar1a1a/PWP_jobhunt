@@ -19,6 +19,10 @@ jobs:
       TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
       OPENROUTER_ENABLED: "true"
+      GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+      GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+      GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+      GMAIL_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -35,7 +39,7 @@ jobs:
         run: |
           python - <<'PY'
           import os, sqlite3, json
-          from research_gap_agent.telegram import send_message, format_run_summary, format_candidate, format_email_draft
+          from research_gap_agent.telegram import send_message, format_run_summary, format_candidate, format_email_draft, format_gmail_draft
           token = os.getenv('TELEGRAM_BOT_TOKEN','').strip()
           chat_id = os.getenv('TELEGRAM_CHAT_ID','').strip()
           if not token or not chat_id:
@@ -49,6 +53,8 @@ jobs:
               int(os.getenv('RG_ERRORS','0')),
               int(os.getenv('RG_DEEP_FULLTEXT','0')),
               int(os.getenv('RG_VERIFIED_CONTACTS','0')),
+              int(os.getenv('RG_GMAIL_DRAFTS','0')),
+              int(os.getenv('RG_GMAIL_ERRORS','0')),
           ))
 
           db = 'data/research_gap.db'
@@ -56,13 +62,14 @@ jobs:
               raise SystemExit(0)
           conn = sqlite3.connect(db)
           targets = conn.execute('SELECT author_name, affiliations_json, researcher_score, papers_json FROM researcher_targets ORDER BY researcher_score DESC LIMIT 3').fetchall()
-          drafts = conn.execute('SELECT author_name, pitch, email FROM drafts ORDER BY rowid DESC').fetchall()
+          drafts = conn.execute('SELECT author_name, pitch, email, gmail_draft_id, gmail_thread_id, gmail_status, gmail_subject FROM drafts ORDER BY rowid DESC').fetchall()
           conn.close()
 
           draft_by_author = {}
-          for author, pitch, email in drafts:
+          for row in drafts:
+              author, pitch, email, draft_id, thread_id, status, subject = row
               if author not in draft_by_author:
-                  draft_by_author[author] = (pitch, email)
+                  draft_by_author[author] = (pitch, email, draft_id, thread_id, status or '', subject or '')
 
           for name, affiliations, score, papers_json in targets:
               affs = json.loads(affiliations or '[]')
@@ -72,11 +79,20 @@ jobs:
               gaps = papers[0].get('gaps') or [] if papers else []
               gap = gaps[0].get('evidence','Gap evidence pending') if gaps else 'Gap evidence pending'
               send_message(format_candidate(name, aff, paper, float(score), gap))
-              pitch, email = draft_by_author.get(name, ('', ''))
+              pitch, email, draft_id, thread_id, status, subject = draft_by_author.get(name, ('', '', None, None, 'skipped_unverified', ''))
               if email:
-                  subject = f"Research internship proposal inspired by {paper}"[:240]
-                  draft_text, markup = format_email_draft(name, subject, email)
+                  subj = subject or f"Research internship proposal inspired by {paper}"[:240]
+                  draft_text, markup = format_email_draft(name, subj, email)
                   send_message(draft_text, reply_markup=markup)
+              # Gmail draft tracking alert (verified contacts only get real drafts).
+              conn2 = sqlite3.connect(db)
+              try:
+                  contact = conn2.execute('SELECT public_email FROM contacts WHERE author_name=? AND public_email IS NOT NULL ORDER BY rowid DESC LIMIT 1', (name,)).fetchone()
+              finally:
+                  conn2.close()
+              to_email = (contact[0] if contact else '')
+              gmail_text, gmail_markup = format_gmail_draft(name, to_email, subj if email else (subject or paper), draft_id, thread_id, status or 'skipped_unverified')
+              send_message(gmail_text, reply_markup=gmail_markup)
           PY
       - name: Upload review package
         if: always()

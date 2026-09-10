@@ -12,6 +12,7 @@ from .author_enrichment import enrich_author
 from .draft_builder import build_email, build_pitch
 from .fulltext import find_public_pdf, fetch_public_text, locate_gap_sentences
 from .gap_engine import score_paper, to_dict
+from .gmail_drafts import create_drafts_for_targets
 from .openrouter_free import analyze_gap, draft_email as llm_draft_email
 from .researchers import aggregate_researchers
 from .review_report import render_markdown
@@ -26,8 +27,8 @@ def abstract_text(work):
     return " ".join(t for _, t in sorted(words))
 
 
-def publish_metrics(scanned: int, targets: int, priority: int, errors: int, deep_count: int, verified_contacts: int, llm_count: int):
-    values = {"RG_SCANNED": scanned, "RG_CANDIDATES": targets, "RG_PRIORITY": priority, "RG_ERRORS": errors, "RG_DEEP_FULLTEXT": deep_count, "RG_VERIFIED_CONTACTS": verified_contacts, "RG_LLM_ANALYZED": llm_count}
+def publish_metrics(scanned: int, targets: int, priority: int, errors: int, deep_count: int, verified_contacts: int, llm_count: int, gmail_drafts: int = 0, gmail_errors: int = 0):
+    values = {"RG_SCANNED": scanned, "RG_CANDIDATES": targets, "RG_PRIORITY": priority, "RG_ERRORS": errors, "RG_DEEP_FULLTEXT": deep_count, "RG_VERIFIED_CONTACTS": verified_contacts, "RG_LLM_ANALYZED": llm_count, "RG_GMAIL_DRAFTS": gmail_drafts, "RG_GMAIL_ERRORS": gmail_errors}
     env_file = os.getenv("GITHUB_ENV")
     if env_file:
         with open(env_file, "a", encoding="utf-8") as f:
@@ -145,6 +146,11 @@ def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: s
     conn.execute("CREATE TABLE IF NOT EXISTS papers(id TEXT PRIMARY KEY, doi TEXT, title TEXT, year INTEGER, citations INTEGER, score REAL, gap_json TEXT, authors_json TEXT, raw_json TEXT)")
     conn.execute("CREATE TABLE IF NOT EXISTS contacts(paper_id TEXT, author_name TEXT, affiliation TEXT, public_email TEXT, verification_url TEXT, review_status TEXT DEFAULT 'pending')")
     conn.execute("CREATE TABLE IF NOT EXISTS drafts(paper_id TEXT, author_name TEXT, pitch TEXT, email TEXT, review_status TEXT DEFAULT 'pending')")
+    for _col in ("gmail_draft_id TEXT", "gmail_thread_id TEXT", "gmail_message_id TEXT", "gmail_status TEXT DEFAULT 'pending'", "gmail_subject TEXT"):
+        _name = _col.split()[0]
+        _existing = {r[1] for r in conn.execute("PRAGMA table_info(drafts)").fetchall()}
+        if _name not in _existing:
+            conn.execute(f"ALTER TABLE drafts ADD COLUMN {_col}")
     conn.execute("CREATE TABLE IF NOT EXISTS researcher_targets(author_name TEXT PRIMARY KEY, affiliations_json TEXT, paper_count INTEGER, researcher_score REAL, papers_json TEXT, review_status TEXT DEFAULT 'pending')")
 
     capabilities = {k: True for k, v in (cfg.get("capabilities") or {}).items() if v} or {k: True for k in (cfg.get("project") or {}).get("capabilities", [])}
@@ -189,21 +195,22 @@ def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: s
     targets = aggregate_researchers(papers, min_score)[:int((cfg.get("outreach") or {}).get("max_candidates", 10))]
     targets, verified_contacts, llm_draft_count = add_drafts_and_contacts(targets, (cfg.get("project") or {}).get("name", "research project"), cfg)
     llm_count += llm_draft_count
+    targets, gmail_created, gmail_errors = create_drafts_for_targets(targets)
     render_markdown(targets, report_path)
 
     for t in targets:
         conn.execute("INSERT OR REPLACE INTO researcher_targets VALUES (?,?,?,?,?,?)", (t["author_name"], json.dumps(t["affiliations"]), t["paper_count"], t["researcher_score"], json.dumps(t["papers"]), "pending"))
         primary = (t.get("papers") or [{}])[0]
         pid = primary.get("doi") or primary.get("title")
-        conn.execute("INSERT INTO drafts VALUES (?,?,?,?,?)", (pid, t["author_name"], t.get("draft_pitch", ""), t.get("draft_email", ""), "pending"))
+        conn.execute("INSERT INTO drafts VALUES (?,?,?,?,?,?,?,?,?,?)", (pid, t["author_name"], t.get("draft_pitch", ""), t.get("draft_email", ""), "pending", t.get("gmail_draft_id"), t.get("gmail_thread_id"), t.get("gmail_message_id"), t.get("gmail_status", "pending"), t.get("gmail_subject", "")))
         for a in t.get("authors_enriched", []):
             conn.execute("INSERT INTO contacts VALUES (?,?,?,?,?,?)", (pid, a.get("name"), a.get("institution", ""), a.get("public_email"), a.get("profile_url"), "pending"))
     conn.commit(); conn.close()
 
     priority_cutoff = float(scoring.get("priority_score", 80))
     priority = sum(1 for t in targets if float(t["researcher_score"]) >= priority_cutoff)
-    publish_metrics(len(seen), len(targets), priority, errors, deep_count, verified_contacts, llm_count)
-    print(f"Scanned {len(seen)} unique works; {len(targets)} researcher targets >= {min_score}. Priority: {priority}. Verified public contacts: {verified_contacts}. Query errors: {errors}. Deep full-text: {deep_count}. OpenRouter free LLM uses: {llm_count}. Report: {report_path}")
+    publish_metrics(len(seen), len(targets), priority, errors, deep_count, verified_contacts, llm_count, gmail_created, gmail_errors)
+    print(f"Scanned {len(seen)} unique works; {len(targets)} researcher targets >= {min_score}. Priority: {priority}. Verified public contacts: {verified_contacts}. Query errors: {errors}. Deep full-text: {deep_count}. OpenRouter free LLM uses: {llm_count}. Gmail drafts: {gmail_created} created, {gmail_errors} errors. Report: {report_path}")
 
 
 if __name__ == "__main__":

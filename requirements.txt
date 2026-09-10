@@ -8,5 +8,9 @@ pypdf>=5.0
 # so you can delete this line and still use those.
 anthropic>=0.40
 
+# Research-gap Gmail drafts (OAuth, drafts.create only — never sends).
+google-api-python-client>=2.0
+google-auth>=2.0
+
 # Tests
 pytest>=8.0

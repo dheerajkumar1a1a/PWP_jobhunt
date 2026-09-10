@@ -75,10 +75,44 @@ def format_email_draft(author_name: str, subject: str, body: str) -> tuple[str, 
     return message, markup
 
 
-def format_run_summary(scanned: int, accepted: int, priority: int, errors: int = 0, deep_fulltext: int = 0, verified_contacts: int = 0) -> str:
-    return (
-        "📚 RESEARCH-GAP SCAN COMPLETE\n\n"
-        f"Papers scanned: {scanned}\nCandidates: {accepted}\nPriority targets: {priority}\n"
-        f"Deep full-text analyzed: {deep_fulltext}\nVerified public contacts: {verified_contacts}\nErrors: {errors}\n\n"
-        "Candidate + copy-ready outreach drafts follow."
+def format_run_summary(scanned: int, accepted: int, priority: int, errors: int = 0, deep_fulltext: int = 0, verified_contacts: int = 0, gmail_drafts: int = 0, gmail_errors: int = 0) -> str:
+    lines = [
+        "📚 RESEARCH-GAP SCAN COMPLETE",
+        "",
+        f"Papers scanned: {scanned}\nCandidates: {accepted}\nPriority targets: {priority}",
+        f"Deep full-text analyzed: {deep_fulltext}\nVerified public contacts: {verified_contacts}\nErrors: {errors}",
+        f"Gmail drafts created: {gmail_drafts}\nGmail draft errors: {gmail_errors}",
+        "",
+        "Candidate + copy-ready outreach drafts follow.",
+    ]
+    return "\n".join(lines)
+
+
+def format_gmail_draft(author_name: str, to_email: str, subject: str, draft_id: str | None, thread_id: str | None, status: str) -> tuple[str, dict | None]:
+    """Full draft tracking alert. Returns (message, reply_markup or None)."""
+    from .gmail_drafts import draft_gmail_link
+
+    if status == "created" and draft_id:
+        link = draft_gmail_link(thread_id)
+        message = (
+            "✉️ GMAIL DRAFT CREATED\n\n"
+            f"To: {author_name.strip() or 'Researcher'} <{to_email}>\n"
+            f"Subject: {subject.strip()[:240]}\n"
+            f"Gmail draft ID: {draft_id}\n\n"
+            "Draft is in your Gmail Drafts — review and press Send yourself. Nothing was auto-sent.\n"
+            "Verify the paper, gap evidence, and recipient before sending."
+        )
+        markup: dict | None = {"inline_keyboard": [[{"text": "📝 Open Gmail Draft", "url": link}]]}
+        return message, markup
+    reason = {
+        "skipped_unverified": "no verified public institutional email — SQLite draft only.",
+        "skipped_disabled": "Gmail disabled/missing GOOGLE_* credentials — SQLite draft only.",
+    }.get(status, status)
+    message = (
+        "✉️ GMAIL DRAFT SKIPPED\n\n"
+        f"To: {author_name.strip() or 'Researcher'} <{to_email or 'no email'}>\n"
+        f"Subject: {subject.strip()[:240]}\n"
+        f"Status: {reason}\n\n"
+        "Copy-ready email draft is still in the report/previous message."
     )
+    return message, None
