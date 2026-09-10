@@ -56,7 +56,13 @@ def extract_public_email(html: str) -> str | None:
 
 
 def resolve_public_profile(name: str, affiliation: str, candidate_urls: list[str] | None = None) -> ProfileCandidate:
-    """Inspect only supplied public profile URLs; never guess an email address or scrape arbitrary search engines."""
+    """Inspect only supplied public profile URLs; never guess an email address or scrape arbitrary search engines.
+
+    Tries every candidate URL and returns the first VERIFIED institutional
+    contact. An unverified page (e.g. an institution homepage with no personal
+    email) never shadows later URLs that might verify.
+    """
+    first_seen: ProfileCandidate | None = None
     for url in candidate_urls or []:
         try:
             if urlparse(url).scheme not in {"http", "https"}:
@@ -64,10 +70,13 @@ def resolve_public_profile(name: str, affiliation: str, candidate_urls: list[str
             html = fetch_text(url)
             email = extract_public_email(html)
             verified = _institutional_email(email, affiliation, url)
-            return ProfileCandidate(name, affiliation, url, email if verified else None, "public_profile_page", verified)
+            if verified:
+                return ProfileCandidate(name, affiliation, url, email, "public_profile_page", True)
+            if first_seen is None:
+                first_seen = ProfileCandidate(name, affiliation, url, None, "public_profile_page", False)
         except (urllib.error.URLError, TimeoutError, ValueError):
             continue
-    return ProfileCandidate(name, affiliation, None, None, "public_profile_page", False)
+    return first_seen or ProfileCandidate(name, affiliation, None, None, "public_profile_page", False)
 
 
 def to_dict(profile: ProfileCandidate) -> dict:

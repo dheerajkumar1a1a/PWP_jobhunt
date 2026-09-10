@@ -11,7 +11,7 @@ import yaml
 
 from .author_backfill import search_openalex_author
 from .author_enrichment import enrich_author
-from .draft_builder import build_email, build_pitch
+from .draft_builder import APPLICANT_NAME, build_email, build_pitch, validate_draft
 from .fulltext import find_public_pdf, fetch_public_text, locate_gap_sentences
 from .gap_engine import score_paper, to_dict
 from .gmail_drafts import create_drafts_for_targets
@@ -137,10 +137,13 @@ def add_drafts_and_contacts(targets: list[dict], project_name: str, cfg: dict) -
                 {"name": item.get("author_name"), "affiliation": item.get("affiliations", []), "public_email": item.get("public_email")},
                 p,
                 g,
+                APPLICANT_NAME,
             )
-            if llm_email:
+            if llm_email and validate_draft(llm_email, item.get("author_name", ""), APPLICANT_NAME):
                 item["draft_email"] = llm_email.strip()
                 llm_count += 1
+            elif llm_email:
+                print(f"LLM draft failed safety validation for {item.get('author_name')}; keeping deterministic draft")
         item["draft_review_status"] = "pending"
         out.append(item)
     return out, verified_count, llm_count

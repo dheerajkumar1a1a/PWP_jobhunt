@@ -1,5 +1,20 @@
 from __future__ import annotations
 
+import re
+
+APPLICANT_NAME = "Dheeraj Kumar"
+
+
+def validate_draft(draft: str, author_name: str, applicant_name: str = APPLICANT_NAME) -> bool:
+    """Safety gate for LLM-drafted outreach. Rejects identity confusion
+    ("I am <recipient>") and drafts missing the applicant's signature."""
+    if not (draft or "").strip():
+        return False
+    for token in (author_name or "").strip().split():
+        if len(token) > 2 and re.search(rf"\bI am {re.escape(token)}\b", draft, re.I):
+            return False
+    return applicant_name.lower() in draft.lower()
+
 
 def proposed_experiment(gap_type: str, capability: str) -> str:
     plans = {

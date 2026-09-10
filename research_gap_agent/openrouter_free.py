@@ -57,12 +57,16 @@ def analyze_gap(project: dict, paper: dict, evidence: str) -> dict | None:
     return None
 
 
-def draft_email(project: dict, researcher: dict, paper: dict, gap: dict) -> str | None:
+def draft_email(project: dict, researcher: dict, paper: dict, gap: dict, applicant_name: str = "Dheeraj Kumar") -> str | None:
     system = (
-        "You write concise, professional academic internship outreach. Use only supplied facts. "
-        "Never claim a paper says something unless present in evidence. Mention one specific gap, "
-        "one concrete experiment, the applicant's demonstrated project capability, and ask for a "
-        "short research internship/conversation. Return only the email body."
+        f"You are {applicant_name}. You are writing an outreach email TO the researcher described below. "
+        f"You are NOT the researcher: never claim to be them, never write 'I am <their name>', "
+        f"and sign only as {applicant_name}. "
+        "Use only supplied facts. Never claim a paper says something unless present in evidence. "
+        "Numbers under <project> (e.g. R-squared, calibration values) are YOUR OWN results: "
+        "present them as yours and never attribute them to the recipient's paper. "
+        "Mention one specific gap, one concrete experiment, your demonstrated project capability, "
+        "and ask for a short research internship/conversation. Return only the email body."
     )
-    user = json.dumps({"project": project, "researcher": researcher, "paper": paper, "gap": gap}, ensure_ascii=False)
+    user = json.dumps({"applicant_name": applicant_name, "project": project, "researcher": researcher, "paper": paper, "gap": gap}, ensure_ascii=False)
     return chat(system, user, max_tokens=900)
