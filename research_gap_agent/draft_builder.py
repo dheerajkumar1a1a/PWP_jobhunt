@@ -28,18 +28,25 @@ def proposed_experiment(gap_type: str, capability: str) -> str:
     return plans.get(gap_type, f"test the {capability} capability against the reported limitation using a matched validation experiment")
 
 
-def build_pitch(author_name: str, paper_title: str, evidence: str, gap_type: str, capability: str, project_name: str) -> str:
+def _project_paragraph(capability: str, project_name: str, gap_type: str) -> str:
+    capability = (capability or "").replace("_", " ").strip()
     experiment = proposed_experiment(gap_type, capability)
     return (
-        f"I studied your paper '{paper_title}' and focused on the reported issue: {evidence} "
         f"My current project, '{project_name}', provides a {capability} capability that could be tested against this limitation. "
         f"A practical next experiment would be to {experiment}. "
         "The goal would be to generate a directly comparable validation dataset and determine whether the approach is strong enough to support a joint research direction."
     )
 
 
+def build_pitch(author_name: str, paper_title: str, evidence: str, gap_type: str, capability: str, project_name: str) -> str:
+    return (
+        f"I studied your paper '{paper_title}' and focused on the reported issue: {evidence} "
+        + _project_paragraph(capability, project_name, gap_type)
+    )
+
+
 def build_email(author_name: str, paper_title: str, evidence: str, gap_type: str, capability: str, project_name: str, applicant_profile: str = "") -> str:
-    pitch = build_pitch(author_name, paper_title, evidence, gap_type, capability, project_name)
+    pitch = _project_paragraph(capability, project_name, gap_type)
     profile = applicant_profile.strip() or "I am seeking a research internship in which I can contribute an existing prototype and experimental validation work."
     last = author_name.split()[-1] if author_name.strip() else "Researcher"
     return (

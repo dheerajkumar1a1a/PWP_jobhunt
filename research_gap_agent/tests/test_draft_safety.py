@@ -1,6 +1,6 @@
 from research_gap_agent import enrichment as en
 from research_gap_agent import openrouter_free as orf
-from research_gap_agent.draft_builder import validate_draft
+from research_gap_agent.draft_builder import build_email, build_pitch, validate_draft
 
 
 def test_resolver_skips_unverified_first_url(monkeypatch):
@@ -35,6 +35,21 @@ def test_validate_draft_rejects_missing_signature():
 def test_validate_draft_accepts_good_draft():
     good = "Dear Dr. Lee,\n\nI read your paper with interest.\n\nBest regards,\nDheeraj Kumar"
     assert validate_draft(good, "In-Hwan Lee") is True
+
+
+def test_email_states_paper_title_once_not_twice():
+    email = build_email("A. Geballa", "Smartphone sensors part 1", "Lab gear is expensive.", "laboratory", "smartphone_based", "Onion Layers")
+    assert email.count("Smartphone sensors part 1") == 1
+    assert email.count("Lab gear is expensive.") == 1
+    assert "My current project, 'Onion Layers', provides a smartphone based capability" in email
+    assert validate_draft(email, "A. Geballa") is True
+
+
+def test_pitch_standalone_keeps_title_and_evidence():
+    pitch = build_pitch("A. Geballa", "Smartphone sensors part 1", "Lab gear is expensive.", "laboratory", "smartphone_based", "Onion Layers")
+    assert "Smartphone sensors part 1" in pitch
+    assert "Lab gear is expensive." in pitch
+    assert "smartphone_based" not in pitch
 
 
 def test_prompt_anchors_identity(monkeypatch):
