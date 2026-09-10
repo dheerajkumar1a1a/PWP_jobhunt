@@ -1,5 +1,12 @@
 from research_gap_agent import fulltext
-from research_gap_agent.fulltext import extract_html_text, extract_pdf_text, fetch_public_text, locate_gap_sentences
+from research_gap_agent.fulltext import (
+    extract_corresponding_email,
+    extract_html_text,
+    extract_pdf_text,
+    fetch_public_text,
+    find_public_pdf,
+    locate_gap_sentences,
+)
 
 
 def test_extract_html_text_removes_markup():
@@ -33,3 +40,24 @@ def test_fetch_public_text_never_raises(monkeypatch):
         raise ConnectionResetError("reset")
     monkeypatch.setattr(fulltext, "fetch_bytes", _boom)
     assert fetch_public_text("https://example.org/paper.pdf") == ""
+
+
+def test_find_public_pdf_reads_both_schemas():
+    assert find_public_pdf(None, {"pdf_url": "https://repo.edu/x.pdf"}) == "https://repo.edu/x.pdf"
+    assert find_public_pdf(None, {"pdf": {"url": "https://s2.org/y.pdf"}}) == "https://s2.org/y.pdf"
+    assert find_public_pdf(None, {"landing_page_url": "https://doi.org/x"}) is None
+    assert find_public_pdf(None, None) is None
+
+
+def test_extract_corresponding_email_prefers_author():
+    head = ("For subscriptions contact editor@elsevier.com. Georgina M. S. Ross et al. "
+            "*Corresponding author. E-mail address: georgina.ross@wur.nl. "
+            '<img src="https://orcid.org/a/flags@2x.9790563a0e331d13.webp">')
+    assert extract_corresponding_email(head, "Georgina M.S. Ross") == "georgina.ross@wur.nl"
+
+
+def test_extract_corresponding_email_rejects_unattributable():
+    head = "Contact the editorial office: editor@elsevier.com. Data: someone@gmail.com. webmaster@sdu.edu.cn"
+    assert extract_corresponding_email(head, "Georgina M.S. Ross") is None
+    assert extract_corresponding_email("", "Nobody") is None
+    assert extract_corresponding_email("mail me at georgina.ross@wur.nl", "") is None

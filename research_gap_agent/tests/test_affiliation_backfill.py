@@ -31,6 +31,8 @@ def test_aggregate_keeps_paper_authors():
 def test_target_affiliations_backfilled(monkeypatch):
     monkeypatch.setattr(cli, "enrich_author", lambda a: {**a, "public_email": None, "profile_url": None, "verified_public_institutional": False})
     monkeypatch.setattr(cli, "search_openalex_author", lambda name: _match())
+    monkeypatch.setattr(cli, "correspondence_from_oa_works", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "europepmc_affiliation_email", lambda *a, **k: None)
     monkeypatch.setattr(cli.time, "sleep", lambda s: None)
     out, _, _ = cli.add_drafts_and_contacts([_target()], "proj", {})
     assert out[0]["affiliations"] == ["Gazi University"]
@@ -43,6 +45,8 @@ def test_no_lookup_when_affiliations_present(monkeypatch):
         raise AssertionError("no author search needed when affiliations exist")
 
     monkeypatch.setattr(cli, "search_openalex_author", _boom)
+    monkeypatch.setattr(cli, "correspondence_from_oa_works", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "europepmc_affiliation_email", lambda *a, **k: None)
     out, _, _ = cli.add_drafts_and_contacts([_target(affiliations=["Known Uni"])], "proj", {})
     assert out[0]["affiliations"] == ["Known Uni"]
 

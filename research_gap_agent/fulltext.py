@@ -7,11 +7,52 @@ import warnings
 from html import unescape
 from urllib.request import Request, urlopen
 
+from .enrichment import FREE_EMAIL_DOMAINS, is_plausible_email, name_fragments
+
 
 def fetch_bytes(url: str, timeout: int = 20) -> tuple[bytes, str]:
     req = Request(url, headers={"User-Agent": "research-gap-agent/0.9 (public full text)"})
     with urlopen(req, timeout=timeout) as r:
         return r.read(), (r.headers.get("Content-Type") or "").lower()
+
+
+# Publisher/editorial domains: an address here belongs to the venue, never the author.
+PUBLISHER_DOMAINS = frozenset({
+    "elsevier.com", "sciencedirect.com", "springer.com", "springernature.com",
+    "nature.com", "wiley.com", "mdpi.com", "frontiersin.org", "frontiersin.com",
+    "ieee.org", "acs.org", "rsc.org", "tandfonline.com", "sagepub.com",
+    "cell.com", "plos.org", "oup.com", "cambridge.org", "ama-assn.org",
+    "biorxiv.org", "medrxiv.org", "arxiv.org", "ssrn.com",
+    "editorialmanager.com", "scholarone.com", "openalex.org", "crossref.org",
+    "orcid.org", "doi.org", "clarivate.com",
+})
+
+EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
+
+
+def extract_corresponding_email(text: str, full_name: str) -> str | None:
+    """Find the author's own address in a paper's first-page correspondence block.
+
+    Only the head of the text is inspected (corresponding-author emails are
+    printed on page 1). The local part must contain a >=3-letter fragment of
+    the author's name, and free-mail plus publisher domains are excluded.
+    Returns None when nothing attributable is found — never a guess.
+    """
+    frags = name_fragments(full_name)
+    if not frags or not text:
+        return None
+    for match in EMAIL_RE.finditer(text[:5000]):
+        if not is_plausible_email(match.group(0), text, match.start()):
+            continue
+        email = match.group(0).rstrip(".,;:)")
+        local, _, domain = email.partition("@")
+        domain = domain.lower()
+        if domain in FREE_EMAIL_DOMAINS or domain in PUBLISHER_DOMAINS:
+            continue
+        local_tokens = set(re.split(r"[^a-z0-9]+", local.lower()))
+        if frags & local_tokens or any(len(f) >= 5 and f in local.lower() for f in frags):
+            return email
+    return None
 
 
 def extract_html_text(raw: bytes) -> str:
@@ -72,7 +113,8 @@ def locate_gap_sentences(text: str, max_sentences: int = 8) -> list[str]:
 
 def find_public_pdf(doi: str | None, openalex_location: dict | None = None) -> str | None:
     if openalex_location:
-        pdf = (openalex_location.get("pdf") or {}).get("url")
+        # Semantic Scholar normalisation nests it; OpenAlex exposes pdf_url flat.
+        pdf = (openalex_location.get("pdf") or {}).get("url") or openalex_location.get("pdf_url")
         if pdf:
             return pdf
     return None

@@ -10,7 +10,7 @@ from pathlib import Path
 import yaml
 
 from .author_backfill import search_openalex_author
-from .author_enrichment import enrich_author
+from .author_enrichment import correspondence_from_oa_works, enrich_author, europepmc_affiliation_email
 from .draft_builder import APPLICANT_NAME, build_email, build_pitch, validate_draft
 from .fulltext import find_public_pdf, fetch_public_text, locate_gap_sentences
 from .gap_engine import score_paper, to_dict
@@ -110,6 +110,27 @@ def add_drafts_and_contacts(targets: list[dict], project_name: str, cfg: dict) -
                     merged.setdefault(name, author)
         enriched = [enrich_author(a) for a in merged.values()]
         verified = [a for a in enriched if a.get("verified_public_institutional") and a.get("public_email")]
+        if not verified:
+            # Last resorts, verified-only: the target's own correspondence email
+            # in their OA papers, then their Europe PMC affiliation strings.
+            target_author = merged.get(item.get("author_name", ""), {})
+            affiliation = (item.get("affiliations") or [""])[0]
+            hit = correspondence_from_oa_works(
+                item.get("author_name", ""),
+                target_author.get("author_id"),
+                affiliation,
+            )
+            if not hit:
+                hit = europepmc_affiliation_email(
+                    item.get("author_name", ""),
+                    target_author.get("orcid"),
+                    target_author.get("author_id"),
+                    affiliation,
+                )
+            if hit:
+                print(f"{hit['contact_source']} contact verified for {item.get('author_name')}: {hit['public_email']}")
+                enriched.append(hit)
+                verified = [hit]
         item["authors_enriched"] = enriched
         if not item.get("affiliations"):
             match = search_openalex_author(item.get("author_name", ""))
