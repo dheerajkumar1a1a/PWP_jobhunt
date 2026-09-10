@@ -3,7 +3,9 @@ name: Research Gap Scan
 on:
   workflow_dispatch:
   schedule:
-    - cron: "17 6 * * 1"
+    # 11:30 AM India Standard Time (Asia/Kolkata) every day.
+    - cron: "30 11 * * *"
+      timezone: "Asia/Kolkata"
 
 permissions:
   contents: read
