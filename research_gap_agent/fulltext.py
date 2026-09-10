@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import io
+import logging
 import re
-import urllib.error
+import warnings
 from html import unescape
 from urllib.request import Request, urlopen
 
@@ -21,10 +22,22 @@ def extract_html_text(raw: bytes) -> str:
 
 
 def extract_pdf_text(raw: bytes) -> str:
+    if not raw.startswith(b"%PDF-"):
+        # Publisher served an HTML error/landing page instead of a PDF
+        # (pypdf would log "invalid pdf header: b'<!doc'" and raise).
+        return ""
     try:
         from pypdf import PdfReader
-        reader = PdfReader(io.BytesIO(raw))
-        return "\n".join(page.extract_text() or "" for page in reader.pages)
+        logger = logging.getLogger("pypdf")
+        level = logger.level
+        logger.setLevel(logging.CRITICAL)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                reader = PdfReader(io.BytesIO(raw))
+                return "\n".join(page.extract_text() or "" for page in reader.pages)
+        finally:
+            logger.setLevel(level)
     except Exception:
         return ""
 
@@ -35,9 +48,14 @@ def fetch_public_text(url: str | None) -> str:
         return ""
     try:
         raw, content_type = fetch_bytes(url)
-    except (urllib.error.URLError, TimeoutError):
+    except OSError:
+        # URLError, TimeoutError, ConnectionResetError, ...: a fulltext
+        # fetch must never crash the scan.
         return ""
     if "pdf" in content_type or url.lower().split("?")[0].endswith(".pdf"):
+        if raw.lstrip()[:1] == b"<":
+            # Same public URL, but the body is a landing page: salvage its text.
+            return extract_html_text(raw)
         return extract_pdf_text(raw)
     if "html" in content_type or "text" in content_type:
         return extract_html_text(raw)
