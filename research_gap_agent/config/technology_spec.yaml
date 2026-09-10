@@ -42,9 +42,12 @@ search:
     - "smartphone colorimetry food quality"
     - "differential colorimetry biochemical gradient"
     - "computer vision onion layer quality"
+    - "non-destructive food quality imaging"
+    - "smartphone colorimetric food analysis"
+    - "computer vision fruit vegetable quality classification"
   sources:
     - openalex
     - crossref
     - semantic_scholar
-  max_results_per_query: 25
-  deep_fulltext_limit: 12
+  max_results_per_query: 100
+  deep_fulltext_limit: 20

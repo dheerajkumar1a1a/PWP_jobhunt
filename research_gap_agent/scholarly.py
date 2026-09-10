@@ -11,10 +11,13 @@ USER_AGENT = "research-gap-agent/0.9 (academic discovery; respectful rate; no au
 TRANSIENT = {429, 500, 502, 503, 504}
 
 
-def get_json(url: str, retries: int = 3):
+def get_json(url: str, retries: int = 3, headers: dict | None = None):
     last = None
+    base = {"User-Agent": USER_AGENT, "Accept": "application/json"}
+    if headers:
+        base.update(headers)
     for attempt in range(retries):
-        req = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
+        req = Request(url, headers=base)
         try:
             with urlopen(req, timeout=30) as r:
                 return json.loads(r.read().decode("utf-8"))
@@ -27,14 +30,60 @@ def get_json(url: str, retries: int = 3):
     raise last or RuntimeError("request failed")
 
 
-def openalex_search(query: str, per_page: int = 25) -> list[dict]:
-    url = "https://api.openalex.org/works?search=" + quote(query) + f"&per-page={min(per_page,25)}&select=id,doi,title,publication_year,authorships,abstract_inverted_index,primary_location,cited_by_count"
-    return get_json(url).get("results", [])
+def _s2_headers() -> dict:
+    import os
+    key = os.getenv("S2_API_KEY", "").strip()
+    return {"x-api-key": key} if key else {}
 
 
-def crossref_search(query: str, rows: int = 10) -> list[dict]:
-    url = "https://api.crossref.org/works?query.bibliographic=" + quote(query) + f"&rows={min(rows,10)}&select=DOI,title,published,author,URL,is-referenced-by-count,link"
-    items = get_json(url).get("message", {}).get("items", [])
+def _mailto() -> str:
+    import os
+    return os.getenv("SCHOLARLY_MAILTO", "").strip() or os.getenv("CROSSREF_MAILTO", "").strip()
+
+
+def openalex_search(query: str, per_page: int = 100) -> list[dict]:
+    """OpenAlex with cursor pagination (up to 200/page). Previously capped at 25 total."""
+    per_page = max(1, min(per_page, 1000))
+    out: list[dict] = []
+    cursor = "*"
+    mailto = _mailto()
+    while len(out) < per_page:
+        fetch = min(200, per_page - len(out))
+        url = "https://api.openalex.org/works?search=" + quote(query) + f"&per-page={fetch}&cursor={quote(cursor, safe='')}&select=id,doi,title,publication_year,authorships,abstract_inverted_index,primary_location,cited_by_count"
+        if mailto:
+            url += "&mailto=" + quote(mailto)
+        try:
+            data = get_json(url)
+        except Exception as exc:
+            print(f"openalex failed for {query!r}: {exc}")
+            break
+        out.extend(data.get("results", []))
+        cursor = (data.get("meta") or {}).get("next_cursor")
+        if not cursor:
+            break
+    return out[:per_page]
+
+
+def crossref_search(query: str, rows: int = 100) -> list[dict]:
+    """Crossref with offset pagination (up to 1000/request). Previously capped at 10 total."""
+    rows = max(1, min(rows, 1000))
+    mailto = _mailto()
+    items: list[dict] = []
+    offset = 0
+    while len(items) < rows:
+        fetch = min(1000, rows - len(items))
+        url = "https://api.crossref.org/works?query.bibliographic=" + quote(query) + f"&rows={fetch}&offset={offset}&select=DOI,title,published,author,URL,is-referenced-by-count,link"
+        if mailto:
+            url += "&mailto=" + quote(mailto)
+        try:
+            batch = get_json(url).get("message", {}).get("items", [])
+        except Exception as exc:
+            print(f"crossref failed for {query!r}: {exc}")
+            break
+        if not batch:
+            break
+        items.extend(batch)
+        offset += len(batch)
     out = []
     for item in items:
         title = (item.get("title") or ["Untitled"])[0]
@@ -52,13 +101,25 @@ def crossref_search(query: str, rows: int = 10) -> list[dict]:
     return out
 
 
-def semantic_scholar_search(query: str, limit: int = 10) -> list[dict]:
-    url = "https://api.semanticscholar.org/graph/v1/paper/search?query=" + quote(query) + "&limit=" + str(min(limit,10)) + "&fields=paperId,title,abstract,year,authors,externalIds,openAccessPdf,citationCount"
-    try:
-        items = get_json(url).get("data", [])
-    except Exception as exc:
-        print(f"semantic_scholar failed for {query!r}: {exc}")
-        return []
+def semantic_scholar_search(query: str, limit: int = 100) -> list[dict]:
+    """Semantic Scholar with offset pagination (up to 100/request). Previously capped at 10 total."""
+    limit = max(1, min(limit, 1000))
+    headers = _s2_headers()
+    raw: list[dict] = []
+    offset = 0
+    while len(raw) < limit:
+        fetch = min(100, limit - len(raw))
+        url = "https://api.semanticscholar.org/graph/v1/paper/search?query=" + quote(query) + "&limit=" + str(fetch) + "&offset=" + str(offset) + "&fields=paperId,title,abstract,year,authors,externalIds,openAccessPdf,citationCount"
+        try:
+            batch = get_json(url, headers=headers).get("data", [])
+        except Exception as exc:
+            print(f"semantic_scholar failed for {query!r}: {exc}")
+            break
+        if not batch:
+            break
+        raw.extend(batch)
+        offset += len(batch)
+    items = raw[:limit]
     out = []
     for item in items:
         authors = [{"author": {"display_name": a.get("name"), "id": a.get("authorId"), "orcid": None}, "institutions": []} for a in item.get("authors", [])]
@@ -96,14 +157,14 @@ def _enrich_openalex_authors(authorships: list[dict]) -> list[dict]:
     return out
 
 
-def discover(query: str, per_query: int = 25) -> list[dict]:
+def discover(query: str, per_query: int = 100) -> list[dict]:
     """Return deduplicated works from several free scholarly sources."""
     works: list[dict] = []
     seen: set[str] = set()
     providers = [
         ("openalex", lambda: openalex_search(query, per_query)),
-        ("crossref", lambda: crossref_search(query, min(10, per_query))),
-        ("semantic_scholar", lambda: semantic_scholar_search(query, min(10, per_query))),
+        ("crossref", lambda: crossref_search(query, per_query)),
+        ("semantic_scholar", lambda: semantic_scholar_search(query, per_query)),
     ]
     for provider, fn in providers:
         try:
