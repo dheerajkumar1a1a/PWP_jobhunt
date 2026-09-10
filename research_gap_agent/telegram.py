@@ -88,7 +88,7 @@ def format_run_summary(scanned: int, accepted: int, priority: int, errors: int =
     return "\n".join(lines)
 
 
-def format_gmail_draft(author_name: str, to_email: str, subject: str, draft_id: str | None, thread_id: str | None, status: str, candidates: list[dict] | None = None) -> tuple[str, dict | None]:
+def format_gmail_draft(author_name: str, to_email: str, subject: str, draft_id: str | None, thread_id: str | None, status: str, candidates: list[dict] | None = None, verified_source: str | None = None) -> tuple[str, dict | None]:
     """Full draft tracking alert. Returns (message, reply_markup or None)."""
     from .gmail_drafts import draft_gmail_link
 
@@ -114,7 +114,8 @@ def format_gmail_draft(author_name: str, to_email: str, subject: str, draft_id: 
             "✉️ GMAIL DRAFT CREATED\n\n"
             f"To: {author_name.strip() or 'Researcher'} <{to_email}>\n"
             f"Subject: {subject.strip()[:240]}\n"
-            f"Gmail draft ID: {draft_id}\n\n"
+            f"Gmail draft ID: {draft_id}\n"
+            f"{'Source: ' + verified_source + chr(10) if verified_source else ''}\n"
             "Draft is in your Gmail Drafts — review and press Send yourself. Nothing was auto-sent.\n"
             "Verify the paper, gap evidence, and recipient before sending."
         )

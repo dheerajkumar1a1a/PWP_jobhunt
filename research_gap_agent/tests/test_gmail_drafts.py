@@ -42,6 +42,8 @@ def _target(name="Ada Lovelace", verified=True, candidates=None):
         "papers": [{"title": "Onion imaging", "doi": "10.1/x"}],
         "public_email": "ada@uni.edu" if verified else None,
         "contact_verified": verified,
+        "contact_source": "paper_pdf_correspondence" if verified else None,
+        "profile_url": "https://repo.testuni.edu/paper.pdf" if verified else None,
         "email_candidates": candidates or [],
         "draft_email": "Dear Dr. Lovelace, ...",
     }
@@ -83,12 +85,26 @@ def test_unverified_with_candidates_creates_user_verify_draft(monkeypatch):
     assert "Dear Dr. Lovelace" in seen["body"]
 
 
-def test_verified_draft_has_no_verify_header(monkeypatch):
+def test_verified_draft_cites_source_not_verify_header(monkeypatch):
     _creds(monkeypatch)
     seen = {}
     monkeypatch.setattr(gd, "create_draft", lambda to, subject, body, cfg=None: seen.update(body=body) or {"gmail_draft_id": "d1", "gmail_thread_id": "t1", "gmail_message_id": "m1"})
     out, created, errors = gd.create_drafts_for_targets([_target(verified=True)])
     assert out[0]["gmail_status"] == "created"
+    assert "VERIFY RECIPIENT" not in seen["body"]
+    assert "Verified To: ada@uni.edu" in seen["body"]
+    assert "https://repo.testuni.edu/paper.pdf" in seen["body"]
+
+
+def test_verified_with_alternatives_lists_them_as_unverified(monkeypatch):
+    _creds(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(gd, "create_draft", lambda to, subject, body, cfg=None: seen.update(body=body) or {"gmail_draft_id": "d1", "gmail_thread_id": "t1", "gmail_message_id": "m1"})
+    cands = [{"email": "a.other@lab.org", "url": "https://lab.org", "source": "lab_website_contact", "verified": False}]
+    out, _, _ = gd.create_drafts_for_targets([_target(verified=True, candidates=cands)])
+    assert out[0]["gmail_status"] == "created"
+    assert "Verified To: ada@uni.edu" in seen["body"]
+    assert "a.other@lab.org" in seen["body"]
     assert "VERIFY RECIPIENT" not in seen["body"]
 
 
@@ -126,10 +142,12 @@ def test_api_error_recorded_not_raised(monkeypatch):
     assert out[0]["gmail_status"].startswith("error:")
 
 
-def test_format_gmail_draft_created_has_link():
-    text, markup = format_gmail_draft("Ada", "ada@uni.edu", "Subject", "d1", "t1", "created")
+def test_format_gmail_draft_created_shows_verified_source():
+    text, markup = format_gmail_draft("Ada", "ada@uni.edu", "Subject", "d1", "t1", "created",
+                                      verified_source="paper_pdf_correspondence — https://repo.testuni.edu/paper.pdf")
     assert "GMAIL DRAFT CREATED" in text
-    assert "d1" in text
+    assert "VERIFY RECIPIENT" not in text
+    assert "https://repo.testuni.edu/paper.pdf" in text
     assert markup and "mail.google.com" in str(markup)
 
 

@@ -61,7 +61,7 @@ jobs:
           if not os.path.exists(db):
               raise SystemExit(0)
           conn = sqlite3.connect(db)
-          targets = conn.execute('SELECT author_name, affiliations_json, researcher_score, papers_json FROM researcher_targets ORDER BY researcher_score DESC LIMIT 3').fetchall()
+          targets = conn.execute('SELECT author_name, affiliations_json, researcher_score, papers_json FROM researcher_targets ORDER BY researcher_score DESC LIMIT 5').fetchall()
           drafts = conn.execute('SELECT author_name, pitch, email, gmail_draft_id, gmail_thread_id, gmail_status, gmail_subject, gmail_to, email_candidates_json FROM drafts ORDER BY rowid DESC').fetchall()
           conn.close()
 
@@ -93,11 +93,14 @@ jobs:
               # confirms by opening the draft. Others stay SQLite-only.
               conn2 = sqlite3.connect(db)
               try:
-                  contact = conn2.execute('SELECT public_email FROM contacts WHERE author_name=? AND public_email IS NOT NULL ORDER BY rowid DESC LIMIT 1', (name,)).fetchone()
+                  contact = conn2.execute('SELECT public_email, verification_url FROM contacts WHERE author_name=? AND public_email IS NOT NULL ORDER BY rowid DESC LIMIT 1', (name,)).fetchone()
               finally:
                   conn2.close()
               to_email = gmail_to or (contact[0] if contact else '')
-              gmail_text, gmail_markup = format_gmail_draft(name, to_email, subj if email else (subject or paper), draft_id, thread_id, status or 'skipped_unverified', candidates)
+              verified_source = None
+              if contact and contact[1]:
+                  verified_source = f"verified_contact — {contact[1]}"
+              gmail_text, gmail_markup = format_gmail_draft(name, to_email, subj if email else (subject or paper), draft_id, thread_id, status or 'skipped_unverified', candidates, verified_source)
               send_message(gmail_text, reply_markup=gmail_markup)
           PY
       - name: Upload review package

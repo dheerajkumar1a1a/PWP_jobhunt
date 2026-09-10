@@ -90,15 +90,24 @@ def draft_gmail_link(thread_id: str | None) -> str:
     return "https://mail.google.com/mail/u/0/#drafts"
 
 
-def build_verify_header(top: dict, rest: list[dict]) -> str:
+def build_verify_header(top: dict, rest: list[dict], to_verified: bool = False) -> str:
     """Human-verification checklist prepended to user-review drafts.
 
     The agent proposes; the user confirms the To field when opening the
-    draft. Nothing here is a verified contact."""
-    lines = [
-        "[VERIFY RECIPIENT — agent-proposed, NOT verified]",
-        f"To: {top['email']}  (source: {top.get('source', 'unknown')}{', ' + top['url'] if top.get('url') else ''})",
-    ]
+    draft. When to_verified=True the To address itself is already a
+    verified institutional contact and the header only cites its source
+    plus any extra addresses found (for reference, unverified)."""
+    src = f"(source: {top.get('source', 'unknown')}{', ' + top['url'] if top.get('url') else ''})"
+    if to_verified:
+        lines = [
+            "[Note — the To address below is a verified institutional contact.]",
+            f"Verified To: {top['email']}  {src}",
+        ]
+    else:
+        lines = [
+            "[VERIFY RECIPIENT — agent-proposed, NOT verified]",
+            f"To: {top['email']}  {src}",
+        ]
     for c in rest[:4]:
         lines.append(f"Also found: {c['email']}  (source: {c.get('source', 'unknown')}{', ' + c['url'] if c.get('url') else ''})")
     lines += [
@@ -154,6 +163,15 @@ def create_drafts_for_targets(targets: list[dict], cfg: GmailConfig | None = Non
             body = item.get("draft_email", "")
             if item["gmail_status"] == "created_unverified":
                 body = build_verify_header(candidates[0], candidates[1:]) + "\n\n" + (body or "")
+            else:
+                # Verified draft: still cite provenance so every draft carries
+                # its source, plus any extra addresses found (unverified).
+                src = (item.get("contact_source") or "").strip()
+                purl = (item.get("profile_url") or "").strip()
+                alts = [c for c in candidates if c["email"].strip().lower() != to_email.lower()]
+                if src or purl or alts:
+                    top = {"email": to_email, "source": src or "verified_contact", "url": purl or None}
+                    body = build_verify_header(top, alts, to_verified=True) + "\n\n" + (body or "")
             result = create_draft(to_email, subject, body, cfg)
             item["gmail_draft_id"] = result.get("gmail_draft_id")
             item["gmail_thread_id"] = result.get("gmail_thread_id")
