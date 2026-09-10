@@ -51,6 +51,35 @@ def test_no_lookup_when_affiliations_present(monkeypatch):
     assert out[0]["affiliations"] == ["Known Uni"]
 
 
+def test_merge_email_candidates_verified_first_then_source_priority():
+    enriched = [
+        {"public_email": None, "profile_url": None, "verified_public_institutional": False,
+         "email_candidates": [
+             {"email": "u@lab.org", "url": "https://lab.org", "source": "lab_website_contact", "verified": False},
+             {"email": "u@gazi.edu.tr", "url": "https://gazi.edu.tr/~u", "source": "public_profile_page", "verified": False},
+         ]},
+        {"public_email": "u@gazi.edu.tr", "profile_url": "https://gazi.edu.tr/~u",
+         "contact_source": "public_profile_page", "verified_public_institutional": True, "email_candidates": []},
+    ]
+    extra = [{"email": "u@paper.org", "url": "https://repo.org/p.pdf", "source": "paper_pdf_correspondence", "verified": False}]
+    merged = cli.merge_email_candidates(enriched, extra)
+    assert [c["email"] for c in merged] == ["u@gazi.edu.tr", "u@paper.org", "u@lab.org"]
+    assert merged[0]["verified"] is True
+
+
+def test_needs_user_verify_flag_set(monkeypatch):
+    monkeypatch.setattr(cli, "enrich_author", lambda a: {**a, "public_email": None, "profile_url": None, "verified_public_institutional": False,
+                                                         "email_candidates": [{"email": "u@lab.org", "url": "https://lab.org", "source": "lab_website_contact", "verified": False}]})
+    monkeypatch.setattr(cli, "search_openalex_author", lambda name: None)
+    monkeypatch.setattr(cli, "correspondence_from_oa_works", lambda *a, **k: None)
+    monkeypatch.setattr(cli, "europepmc_affiliation_email", lambda *a, **k: None)
+    monkeypatch.setattr(cli.time, "sleep", lambda s: None)
+    out, verified, _ = cli.add_drafts_and_contacts([_target()], "proj", {})
+    assert verified == 0
+    assert out[0]["needs_user_verify"] is True
+    assert out[0]["email_candidates"][0]["email"] == "u@lab.org"
+
+
 def test_merged_authors_reach_enrichment(monkeypatch):
     seen = []
     monkeypatch.setattr(cli, "enrich_author", lambda a: seen.append(a["name"]) or {**a, "public_email": "u@gazi.edu.tr", "profile_url": "https://gazi.edu.tr", "verified_public_institutional": True})

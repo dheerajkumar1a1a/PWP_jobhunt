@@ -7,7 +7,7 @@ import warnings
 from html import unescape
 from urllib.request import Request, urlopen
 
-from .enrichment import FREE_EMAIL_DOMAINS, is_plausible_email, name_fragments
+from .enrichment import FREE_EMAIL_DOMAINS, PUBLISHER_DOMAINS, is_plausible_email, name_fragments
 
 
 def fetch_bytes(url: str, timeout: int = 20) -> tuple[bytes, str]:
@@ -15,17 +15,6 @@ def fetch_bytes(url: str, timeout: int = 20) -> tuple[bytes, str]:
     with urlopen(req, timeout=timeout) as r:
         return r.read(), (r.headers.get("Content-Type") or "").lower()
 
-
-# Publisher/editorial domains: an address here belongs to the venue, never the author.
-PUBLISHER_DOMAINS = frozenset({
-    "elsevier.com", "sciencedirect.com", "springer.com", "springernature.com",
-    "nature.com", "wiley.com", "mdpi.com", "frontiersin.org", "frontiersin.com",
-    "ieee.org", "acs.org", "rsc.org", "tandfonline.com", "sagepub.com",
-    "cell.com", "plos.org", "oup.com", "cambridge.org", "ama-assn.org",
-    "biorxiv.org", "medrxiv.org", "arxiv.org", "ssrn.com",
-    "editorialmanager.com", "scholarone.com", "openalex.org", "crossref.org",
-    "orcid.org", "doi.org", "clarivate.com",
-})
 
 EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.I)
 

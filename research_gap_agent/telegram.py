@@ -88,12 +88,28 @@ def format_run_summary(scanned: int, accepted: int, priority: int, errors: int =
     return "\n".join(lines)
 
 
-def format_gmail_draft(author_name: str, to_email: str, subject: str, draft_id: str | None, thread_id: str | None, status: str) -> tuple[str, dict | None]:
+def format_gmail_draft(author_name: str, to_email: str, subject: str, draft_id: str | None, thread_id: str | None, status: str, candidates: list[dict] | None = None) -> tuple[str, dict | None]:
     """Full draft tracking alert. Returns (message, reply_markup or None)."""
     from .gmail_drafts import draft_gmail_link
 
-    if status == "created" and draft_id:
+    if status in ("created", "created_unverified") and draft_id:
         link = draft_gmail_link(thread_id)
+        if status == "created_unverified":
+            alts = [c for c in (candidates or []) if (c.get("email") or "").strip() and c.get("email") != to_email][:4]
+            lines = [
+                "✉️ GMAIL DRAFT CREATED — VERIFY RECIPIENT\n",
+                f"To (agent-proposed, NOT verified): {author_name.strip() or 'Researcher'} <{to_email}>",
+                f"Subject: {subject.strip()[:240]}",
+                f"Gmail draft ID: {draft_id}\n",
+            ]
+            for c in alts:
+                lines.append(f"Also found: {c['email']} (source: {c.get('source', 'unknown')}{', ' + c['url'] if c.get('url') else ''})")
+            lines += [
+                "",
+                "Open the draft, confirm the To field against the source link(s), fix it if needed, then Send. Nothing was auto-sent.",
+            ]
+            markup: dict | None = {"inline_keyboard": [[{"text": "📝 Open Gmail Draft & Verify", "url": link}]]}
+            return "\n".join(lines), markup
         message = (
             "✉️ GMAIL DRAFT CREATED\n\n"
             f"To: {author_name.strip() or 'Researcher'} <{to_email}>\n"
@@ -102,7 +118,7 @@ def format_gmail_draft(author_name: str, to_email: str, subject: str, draft_id: 
             "Draft is in your Gmail Drafts — review and press Send yourself. Nothing was auto-sent.\n"
             "Verify the paper, gap evidence, and recipient before sending."
         )
-        markup: dict | None = {"inline_keyboard": [[{"text": "📝 Open Gmail Draft", "url": link}]]}
+        markup = {"inline_keyboard": [[{"text": "📝 Open Gmail Draft", "url": link}]]}
         return message, markup
     reason = {
         "skipped_unverified": "no verified public institutional email — SQLite draft only.",

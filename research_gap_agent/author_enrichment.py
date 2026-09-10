@@ -6,7 +6,7 @@ from urllib.parse import quote, urljoin, urlparse
 
 from . import scholarly
 from .author_backfill import backfill_profile_urls, fetch_openalex_author, institution_homepage, search_openalex_author
-from .enrichment import fetch_text, find_named_institutional_email, resolve_public_profile, to_dict
+from .enrichment import fetch_text, find_named_emails, find_named_institutional_email, resolve_public_profile, to_dict
 from .fulltext import extract_corresponding_email, fetch_public_text
 
 # Cap on PDF fetches per author: the fallback serves at most ~10 candidates,
@@ -50,6 +50,13 @@ def _institution_domains(match: dict | None) -> set[str]:
     return domains
 
 
+def _add_candidate(candidates: list[dict] | None, email: str | None, url: str | None, source: str) -> None:
+    if candidates is None or not email:
+        return
+    if all(c["email"] != email for c in candidates):
+        candidates.append({"email": email, "url": url, "source": source, "verified": False})
+
+
 def _oa_pdf_urls(author_id: str) -> list[tuple[str, str]]:
     """(title, pdf_url) across all locations of the author's works, repository copies first."""
     aid = author_id.rsplit("/", 1)[-1]
@@ -75,11 +82,15 @@ def _oa_pdf_urls(author_id: str) -> list[tuple[str, str]]:
     return repository + publisher
 
 
-def correspondence_from_oa_works(name: str, author_id: str | None = None, affiliation: str = "") -> dict | None:
+def correspondence_from_oa_works(name: str, author_id: str | None = None, affiliation: str = "", candidates: list[dict] | None = None) -> dict | None:
     """Last-resort contact: the author's own correspondence email printed in one
     of their open-access papers. Only returned when the email domain matches a
     homepage domain of the author's OpenAlex institution — same strict bar as
-    profile verification, different source. Returns None on any doubt."""
+    profile verification, different source. Returns None on any doubt.
+
+    Name-matching addresses that fail the domain check are appended to
+    `candidates` for human review instead of being dropped.
+    """
     try:
         match = _resolve_author_match(name, author_id)
         domains = _institution_domains(match)
@@ -104,6 +115,8 @@ def correspondence_from_oa_works(name: str, author_id: str | None = None, affili
                     "profile_backfilled": False,
                     "correspondence_paper": title,
                 }
+            for named in find_named_emails(text[:5000], name):
+                _add_candidate(candidates, named, pdf_url, "paper_pdf_correspondence")
     except Exception:
         return None
     return None
@@ -113,10 +126,13 @@ def _http_url(value: object) -> bool:
     return isinstance(value, str) and value.startswith(("http://", "https://"))
 
 
-def lab_contact_crawl(name: str, start_urls: list[str] | None, author_id: str | None = None, affiliation: str = "") -> dict | None:
+def lab_contact_crawl(name: str, start_urls: list[str] | None, author_id: str | None = None, affiliation: str = "", candidates: list[dict] | None = None) -> dict | None:
     """Follow Contact/People links one hop from the author's own stated sites
     (ORCID researcher-urls, homepages). Same host only; the email must still
-    name the person on an institutional domain. Returns None on any doubt."""
+    name the person on an institutional domain. Returns None on any doubt.
+
+    Name-matching addresses that fail the domain check are appended to
+    `candidates` for human review instead of being dropped."""
     try:
         match = _resolve_author_match(name, author_id)
         domains = _institution_domains(match)
@@ -150,6 +166,8 @@ def lab_contact_crawl(name: str, start_urls: list[str] | None, author_id: str | 
                     "verified_public_institutional": True,
                     "profile_backfilled": False,
                 }
+            for named in find_named_emails(html, name):
+                _add_candidate(candidates, named, url, "lab_website_contact")
             if depth > 0:
                 continue
             base = (urlparse(url).hostname or "").lower()
@@ -167,9 +185,12 @@ def lab_contact_crawl(name: str, start_urls: list[str] | None, author_id: str | 
     return None
 
 
-def europepmc_affiliation_email(name: str, orcid: str | None = None, author_id: str | None = None, affiliation: str = "") -> dict | None:
+def europepmc_affiliation_email(name: str, orcid: str | None = None, author_id: str | None = None, affiliation: str = "", candidates: list[dict] | None = None) -> dict | None:
     """PubMed-indexed affiliation strings sometimes carry the author's address
-    ('Electronic address: x@y.edu'). ORCID-queried, name- and domain-checked."""
+    ('Electronic address: x@y.edu'). ORCID-queried, name- and domain-checked.
+
+    Name-matching addresses that fail the domain check are appended to
+    `candidates` for human review instead of being dropped."""
     if not orcid:
         return None
     try:
@@ -193,6 +214,11 @@ def europepmc_affiliation_email(name: str, orcid: str | None = None, author_id: 
                     "verified_public_institutional": True,
                     "profile_backfilled": False,
                 }
+            article_url = None
+            if res.get("id"):
+                article_url = f"https://europepmc.org/article/{res.get('source') or 'MED'}/{res.get('id')}"
+            for named in find_named_emails(res.get("affiliation") or "", name):
+                _add_candidate(candidates, named, article_url, "europepmc_affiliation")
     except Exception:
         return None
     return None
@@ -217,13 +243,17 @@ def enrich_author(author: dict) -> dict:
         backfilled = bool(urls)
         if not affiliation and backfilled_institution:
             affiliation = backfilled_institution
-    profile = resolve_public_profile(name, affiliation, urls)
+    candidates: list[dict] = []
+    profile = resolve_public_profile(name, affiliation, urls, candidates)
     lab_hit = None
     if not profile.verified_public_institutional and urls and name:
-        lab_hit = lab_contact_crawl(name, urls, author.get("author_id"), affiliation)
+        lab_hit = lab_contact_crawl(name, urls, author.get("author_id"), affiliation, candidates)
     result = dict(author)
     if not (result.get("institution") or "").strip() and affiliation:
         result["institution"] = affiliation
+    for c in candidates:
+        c.setdefault("verified", False)
+    result["email_candidates"] = [dict(c) for c in candidates]
     if lab_hit:
         result.update({
             "profile_url": lab_hit["profile_url"],

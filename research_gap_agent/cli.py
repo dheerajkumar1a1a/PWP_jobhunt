@@ -96,6 +96,27 @@ def deep_analyze_record(record: dict, work: dict, capabilities: dict[str, bool],
     return updated, False
 
 
+SOURCE_PRIORITY = {"paper_pdf_correspondence": 0, "europepmc_affiliation": 1, "lab_website_contact": 2, "public_profile_page": 3}
+
+
+def merge_email_candidates(enriched: list[dict], extra: list[dict] | None = None) -> list[dict]:
+    """Verified contacts first, then user-reviewable candidates by source
+    priority. Deduplicated by address; a verified entry always wins."""
+    merged: dict[str, dict] = {}
+    for a in enriched:
+        if a.get("verified_public_institutional") and a.get("public_email"):
+            merged[a["public_email"]] = {
+                "email": a["public_email"], "url": a.get("profile_url"),
+                "source": a.get("contact_source", "public_profile_page"), "verified": True,
+            }
+    for pool in ([a.get("email_candidates") or [] for a in enriched] + [extra or []]):
+        for c in pool:
+            email = (c.get("email") or "").strip()
+            if email and email not in merged:
+                merged[email] = {"email": email, "url": c.get("url"), "source": c.get("source", "unknown"), "verified": False}
+    return sorted(merged.values(), key=lambda c: (not c["verified"], SOURCE_PRIORITY.get(c["source"], 9), c["email"]))
+
+
 def add_drafts_and_contacts(targets: list[dict], project_name: str, cfg: dict) -> tuple[list[dict], int, int]:
     out = []
     verified_count = 0
@@ -110,9 +131,12 @@ def add_drafts_and_contacts(targets: list[dict], project_name: str, cfg: dict) -
                     merged.setdefault(name, author)
         enriched = [enrich_author(a) for a in merged.values()]
         verified = [a for a in enriched if a.get("verified_public_institutional") and a.get("public_email")]
+        fallback_candidates: list[dict] = []
         if not verified:
             # Last resorts, verified-only: the target's own correspondence email
             # in their OA papers, then their Europe PMC affiliation strings.
+            # Anything name-matching but domain-unproven lands in
+            # fallback_candidates for the user to verify at Send time.
             target_author = merged.get(item.get("author_name", ""), {})
             affiliation = (item.get("affiliations") or [""])[0]
             print(f"Profile verification failed for {item.get('author_name')}; trying OA correspondence fallback")
@@ -120,6 +144,7 @@ def add_drafts_and_contacts(targets: list[dict], project_name: str, cfg: dict) -
                 item.get("author_name", ""),
                 target_author.get("author_id"),
                 affiliation,
+                fallback_candidates,
             )
             if not hit:
                 print(f"OA correspondence found nothing for {item.get('author_name')}; trying Europe PMC fallback")
@@ -128,12 +153,15 @@ def add_drafts_and_contacts(targets: list[dict], project_name: str, cfg: dict) -
                     target_author.get("orcid"),
                     target_author.get("author_id"),
                     affiliation,
+                    fallback_candidates,
                 )
             if hit:
                 print(f"{hit['contact_source']} contact verified for {item.get('author_name')}: {hit['public_email']}")
                 enriched.append(hit)
                 verified = [hit]
         item["authors_enriched"] = enriched
+        item["email_candidates"] = merge_email_candidates(enriched, fallback_candidates)
+        item["needs_user_verify"] = bool(item["email_candidates"]) and not bool(verified)
         if not item.get("affiliations"):
             match = search_openalex_author(item.get("author_name", ""))
             if match:
@@ -181,7 +209,7 @@ def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: s
     conn.execute("CREATE TABLE IF NOT EXISTS papers(id TEXT PRIMARY KEY, doi TEXT, title TEXT, year INTEGER, citations INTEGER, score REAL, gap_json TEXT, authors_json TEXT, raw_json TEXT)")
     conn.execute("CREATE TABLE IF NOT EXISTS contacts(paper_id TEXT, author_name TEXT, affiliation TEXT, public_email TEXT, verification_url TEXT, review_status TEXT DEFAULT 'pending')")
     conn.execute("CREATE TABLE IF NOT EXISTS drafts(paper_id TEXT, author_name TEXT, pitch TEXT, email TEXT, review_status TEXT DEFAULT 'pending')")
-    for _col in ("gmail_draft_id TEXT", "gmail_thread_id TEXT", "gmail_message_id TEXT", "gmail_status TEXT DEFAULT 'pending'", "gmail_subject TEXT"):
+    for _col in ("gmail_draft_id TEXT", "gmail_thread_id TEXT", "gmail_message_id TEXT", "gmail_status TEXT DEFAULT 'pending'", "gmail_subject TEXT", "gmail_to TEXT", "email_candidates_json TEXT"):
         _name = _col.split()[0]
         _existing = {r[1] for r in conn.execute("PRAGMA table_info(drafts)").fetchall()}
         if _name not in _existing:
@@ -237,7 +265,7 @@ def scan(config_path: str, db_path: str = "data/research_gap.db", report_path: s
         conn.execute("INSERT OR REPLACE INTO researcher_targets VALUES (?,?,?,?,?,?)", (t["author_name"], json.dumps(t["affiliations"]), t["paper_count"], t["researcher_score"], json.dumps(t["papers"]), "pending"))
         primary = (t.get("papers") or [{}])[0]
         pid = primary.get("doi") or primary.get("title")
-        conn.execute("INSERT INTO drafts VALUES (?,?,?,?,?,?,?,?,?,?)", (pid, t["author_name"], t.get("draft_pitch", ""), t.get("draft_email", ""), "pending", t.get("gmail_draft_id"), t.get("gmail_thread_id"), t.get("gmail_message_id"), t.get("gmail_status", "pending"), t.get("gmail_subject", "")))
+        conn.execute("INSERT INTO drafts VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (pid, t["author_name"], t.get("draft_pitch", ""), t.get("draft_email", ""), "pending", t.get("gmail_draft_id"), t.get("gmail_thread_id"), t.get("gmail_message_id"), t.get("gmail_status", "pending"), t.get("gmail_subject", ""), t.get("gmail_to"), json.dumps(t.get("email_candidates") or [])))
         for a in t.get("authors_enriched", []):
             conn.execute("INSERT INTO contacts VALUES (?,?,?,?,?,?)", (pid, a.get("name"), a.get("institution", ""), a.get("public_email"), a.get("profile_url"), "pending"))
     conn.commit(); conn.close()

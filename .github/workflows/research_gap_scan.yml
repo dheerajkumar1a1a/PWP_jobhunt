@@ -62,14 +62,18 @@ jobs:
               raise SystemExit(0)
           conn = sqlite3.connect(db)
           targets = conn.execute('SELECT author_name, affiliations_json, researcher_score, papers_json FROM researcher_targets ORDER BY researcher_score DESC LIMIT 3').fetchall()
-          drafts = conn.execute('SELECT author_name, pitch, email, gmail_draft_id, gmail_thread_id, gmail_status, gmail_subject FROM drafts ORDER BY rowid DESC').fetchall()
+          drafts = conn.execute('SELECT author_name, pitch, email, gmail_draft_id, gmail_thread_id, gmail_status, gmail_subject, gmail_to, email_candidates_json FROM drafts ORDER BY rowid DESC').fetchall()
           conn.close()
 
           draft_by_author = {}
           for row in drafts:
-              author, pitch, email, draft_id, thread_id, status, subject = row
+              author, pitch, email, draft_id, thread_id, status, subject, gmail_to, candidates_json = row
               if author not in draft_by_author:
-                  draft_by_author[author] = (pitch, email, draft_id, thread_id, status or '', subject or '')
+                  try:
+                      candidates = json.loads(candidates_json or '[]')
+                  except Exception:
+                      candidates = []
+                  draft_by_author[author] = (pitch, email, draft_id, thread_id, status or '', subject or '', gmail_to or '', candidates)
 
           for name, affiliations, score, papers_json in targets:
               affs = json.loads(affiliations or '[]')
@@ -79,19 +83,21 @@ jobs:
               gaps = papers[0].get('gaps') or [] if papers else []
               gap = gaps[0].get('evidence','Gap evidence pending') if gaps else 'Gap evidence pending'
               send_message(format_candidate(name, aff, paper, float(score), gap))
-              pitch, email, draft_id, thread_id, status, subject = draft_by_author.get(name, ('', '', None, None, 'skipped_unverified', ''))
+              pitch, email, draft_id, thread_id, status, subject, gmail_to, candidates = draft_by_author.get(name, ('', '', None, None, 'skipped_unverified', '', '', []))
               if email:
                   subj = subject or f"Research internship proposal inspired by {paper}"[:240]
                   draft_text, markup = format_email_draft(name, subj, email)
                   send_message(draft_text, reply_markup=markup)
-              # Gmail draft tracking alert (verified contacts only get real drafts).
+              # Gmail draft tracking alert. Verified contacts get `created` drafts;
+              # agent-proposed recipients get `created_unverified` drafts the user
+              # confirms by opening the draft. Others stay SQLite-only.
               conn2 = sqlite3.connect(db)
               try:
                   contact = conn2.execute('SELECT public_email FROM contacts WHERE author_name=? AND public_email IS NOT NULL ORDER BY rowid DESC LIMIT 1', (name,)).fetchone()
               finally:
                   conn2.close()
-              to_email = (contact[0] if contact else '')
-              gmail_text, gmail_markup = format_gmail_draft(name, to_email, subj if email else (subject or paper), draft_id, thread_id, status or 'skipped_unverified')
+              to_email = gmail_to or (contact[0] if contact else '')
+              gmail_text, gmail_markup = format_gmail_draft(name, to_email, subj if email else (subject or paper), draft_id, thread_id, status or 'skipped_unverified', candidates)
               send_message(gmail_text, reply_markup=gmail_markup)
           PY
       - name: Upload review package

@@ -90,12 +90,33 @@ def draft_gmail_link(thread_id: str | None) -> str:
     return "https://mail.google.com/mail/u/0/#drafts"
 
 
-def create_drafts_for_targets(targets: list[dict], cfg: GmailConfig | None = None) -> tuple[list[dict], int, int]:
-    """Verified-contacts-only Gmail draft creation. Mutates copies, never raises.
+def build_verify_header(top: dict, rest: list[dict]) -> str:
+    """Human-verification checklist prepended to user-review drafts.
 
-    Only targets with contact_verified + public_email get a real Gmail draft.
-    Others keep gmail_status='skipped_unverified'. When Gmail is disabled,
-    all targets get gmail_status='skipped_disabled'.
+    The agent proposes; the user confirms the To field when opening the
+    draft. Nothing here is a verified contact."""
+    lines = [
+        "[VERIFY RECIPIENT — agent-proposed, NOT verified]",
+        f"To: {top['email']}  (source: {top.get('source', 'unknown')}{', ' + top['url'] if top.get('url') else ''})",
+    ]
+    for c in rest[:4]:
+        lines.append(f"Also found: {c['email']}  (source: {c.get('source', 'unknown')}{', ' + c['url'] if c.get('url') else ''})")
+    lines += [
+        "Checklist before Send: 1) open the source link, 2) confirm the name and address match, 3) fix the To field if needed.",
+        "---",
+    ]
+    return "\n".join(lines)
+
+
+def create_drafts_for_targets(targets: list[dict], cfg: GmailConfig | None = None) -> tuple[list[dict], int, int]:
+    """Verified-contacts-only Gmail draft creation, plus user-review drafts.
+
+    Only targets with contact_verified + public_email get a `created` draft.
+    Targets with agent-proposed email_candidates get a `created_unverified`
+    draft addressed to the top candidate, with a verification header baked
+    into the body — the user confirms the recipient when opening the draft.
+    Nothing is ever sent. Others keep gmail_status='skipped_unverified'.
+    When Gmail is disabled, all targets get gmail_status='skipped_disabled'.
     """
     cfg = cfg or from_env()
     out: list[dict] = []
@@ -109,12 +130,20 @@ def create_drafts_for_targets(targets: list[dict], cfg: GmailConfig | None = Non
         subject = build_subject(paper.get("title", ""))
         item["gmail_subject"] = subject
         to_email = (item.get("public_email") or "").strip()
+        candidates = [c for c in (item.get("email_candidates") or []) if (c.get("email") or "").strip()]
         if not (item.get("contact_verified") and to_email):
-            item["gmail_status"] = "skipped_unverified"
-            item["gmail_draft_id"] = None
-            item["gmail_thread_id"] = None
-            out.append(item)
-            continue
+            if not candidates:
+                item["gmail_status"] = "skipped_unverified"
+                item["gmail_draft_id"] = None
+                item["gmail_thread_id"] = None
+                item["gmail_to"] = None
+                out.append(item)
+                continue
+            to_email = candidates[0]["email"]
+            item["gmail_status"] = "created_unverified"
+        else:
+            item["gmail_status"] = "created"
+        item["gmail_to"] = to_email
         if not gmail_on:
             item["gmail_status"] = "skipped_disabled"
             item["gmail_draft_id"] = None
@@ -122,11 +151,13 @@ def create_drafts_for_targets(targets: list[dict], cfg: GmailConfig | None = Non
             out.append(item)
             continue
         try:
-            result = create_draft(to_email, subject, item.get("draft_email", ""), cfg)
+            body = item.get("draft_email", "")
+            if item["gmail_status"] == "created_unverified":
+                body = build_verify_header(candidates[0], candidates[1:]) + "\n\n" + (body or "")
+            result = create_draft(to_email, subject, body, cfg)
             item["gmail_draft_id"] = result.get("gmail_draft_id")
             item["gmail_thread_id"] = result.get("gmail_thread_id")
             item["gmail_message_id"] = result.get("gmail_message_id")
-            item["gmail_status"] = "created"
             created += 1
         except Exception as exc:
             item["gmail_draft_id"] = None

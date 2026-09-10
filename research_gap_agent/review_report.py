@@ -41,8 +41,15 @@ def render_markdown(targets: list[dict], output: str = "out/research_gap_report.
             lines += ["**Gmail draft status:** " + str(gmail_status)]
             if t.get("gmail_draft_id"):
                 lines += [f"**Gmail draft ID:** {t.get('gmail_draft_id')}", f"**Gmail thread ID:** {t.get('gmail_thread_id') or 'n/a'}"]
-            elif t.get("public_email"):
-                lines += [f"**Recipient:** {t.get('public_email')}"]
+            recipient = t.get("gmail_to") or t.get("public_email")
+            if recipient:
+                lines += [f"**Recipient:** {recipient}" + ("" if t.get("contact_verified") else " (agent-proposed — verify before sending)")]
+            lines += [""]
+        candidates = [c for c in (t.get("email_candidates") or []) if (c.get("email") or "").strip()]
+        if candidates and not t.get("contact_verified"):
+            lines += ["**Proposed recipients (verify before sending):**", ""]
+            for c in candidates[:5]:
+                lines += [f"- `{c['email']}` — source: {c.get('source', 'unknown')}{', ' + c['url'] if c.get('url') else ''}" + (" ✅ verified" if c.get("verified") else "")]
             lines += [""]
         lines += ["> Verify the original paper, exact limitation, author identity/affiliation, public institutional contact, and proposed experiment before outreach.", ""]
     text = "\n".join(lines)

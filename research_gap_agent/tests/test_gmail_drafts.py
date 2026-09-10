@@ -33,7 +33,7 @@ def test_build_mime_roundtrip():
     assert "Hello" in decoded
 
 
-def _target(name="Ada Lovelace", verified=True):
+def _target(name="Ada Lovelace", verified=True, candidates=None):
     return {
         "author_name": name,
         "affiliations": ["Uni"],
@@ -42,19 +42,54 @@ def _target(name="Ada Lovelace", verified=True):
         "papers": [{"title": "Onion imaging", "doi": "10.1/x"}],
         "public_email": "ada@uni.edu" if verified else None,
         "contact_verified": verified,
+        "email_candidates": candidates or [],
         "draft_email": "Dear Dr. Lovelace, ...",
     }
 
 
-def test_unverified_targets_never_create(monkeypatch):
+def _creds(monkeypatch):
     _clear_env(monkeypatch)
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "id")
     monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "s")
     monkeypatch.setenv("GOOGLE_REFRESH_TOKEN", "r")
+
+
+def test_unverified_without_candidates_never_creates(monkeypatch):
+    _creds(monkeypatch)
     out, created, errors = gd.create_drafts_for_targets([_target(verified=False)])
     assert created == 0 and errors == 0
     assert out[0]["gmail_status"] == "skipped_unverified"
     assert out[0]["gmail_draft_id"] is None
+    assert out[0]["gmail_to"] is None
+
+
+def test_unverified_with_candidates_creates_user_verify_draft(monkeypatch):
+    _creds(monkeypatch)
+    seen = {}
+    def _fake_create(to, subject, body, cfg=None):
+        seen.update(to=to, body=body)
+        return {"gmail_draft_id": "d9", "gmail_thread_id": "t9", "gmail_message_id": "m9"}
+    monkeypatch.setattr(gd, "create_draft", _fake_create)
+    cands = [
+        {"email": "a.lovelace@uni.edu", "url": "https://uni.edu/~ada", "source": "lab_website_contact", "verified": False},
+        {"email": "ada@dept.uni.edu", "url": None, "source": "public_profile_page", "verified": False},
+    ]
+    out, created, errors = gd.create_drafts_for_targets([_target(verified=False, candidates=cands)])
+    assert (created, errors) == (1, 0)
+    assert out[0]["gmail_status"] == "created_unverified"
+    assert out[0]["gmail_to"] == "a.lovelace@uni.edu"
+    assert "VERIFY RECIPIENT" in seen["body"]
+    assert "ada@dept.uni.edu" in seen["body"]
+    assert "Dear Dr. Lovelace" in seen["body"]
+
+
+def test_verified_draft_has_no_verify_header(monkeypatch):
+    _creds(monkeypatch)
+    seen = {}
+    monkeypatch.setattr(gd, "create_draft", lambda to, subject, body, cfg=None: seen.update(body=body) or {"gmail_draft_id": "d1", "gmail_thread_id": "t1", "gmail_message_id": "m1"})
+    out, created, errors = gd.create_drafts_for_targets([_target(verified=True)])
+    assert out[0]["gmail_status"] == "created"
+    assert "VERIFY RECIPIENT" not in seen["body"]
 
 
 def test_disabled_gmail_skips_verified(monkeypatch):
@@ -95,6 +130,17 @@ def test_format_gmail_draft_created_has_link():
     text, markup = format_gmail_draft("Ada", "ada@uni.edu", "Subject", "d1", "t1", "created")
     assert "GMAIL DRAFT CREATED" in text
     assert "d1" in text
+    assert markup and "mail.google.com" in str(markup)
+
+
+def test_format_gmail_draft_unverified_lists_alternatives():
+    cands = [
+        {"email": "a.lovelace@uni.edu", "url": "https://uni.edu/~ada", "source": "lab_website_contact", "verified": False},
+        {"email": "ada@dept.uni.edu", "url": None, "source": "public_profile_page", "verified": False},
+    ]
+    text, markup = format_gmail_draft("Ada", "a.lovelace@uni.edu", "Subject", "d9", "t9", "created_unverified", cands)
+    assert "VERIFY RECIPIENT" in text
+    assert "ada@dept.uni.edu" in text
     assert markup and "mail.google.com" in str(markup)
 
 

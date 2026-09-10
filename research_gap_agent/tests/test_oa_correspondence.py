@@ -1,5 +1,5 @@
 import research_gap_agent.author_enrichment as ae
-from research_gap_agent.enrichment import extract_public_email, find_named_institutional_email
+from research_gap_agent.enrichment import extract_public_email, find_named_emails, find_named_institutional_email
 
 MATCH = {
     "id": "https://openalex.org/A1",
@@ -121,3 +121,20 @@ def test_europepmc_hit(monkeypatch):
 
 def test_europepmc_requires_orcid():
     assert ae.europepmc_affiliation_email("Test Author") is None
+
+
+def test_find_named_emails_collects_any_domain():
+    html = ("Write to georgina.ross@wur.nl or georgina.ross@gmail.com "
+            "or editor@elsevier.com; webmaster@wur.nl keeps the site.")
+    assert find_named_emails(html, "Georgina M.S. Ross") == ["georgina.ross@wur.nl"]
+    assert find_named_emails(html, "Yunfeng Zhao") == []
+
+
+def test_resolve_collects_candidates_without_verifying(monkeypatch):
+    from research_gap_agent import enrichment as en
+    html = 'Lab contact: <a href="mailto:t.author@random.org">mail</a>'
+    monkeypatch.setattr(en, "fetch_text", lambda url, timeout=20: html)
+    collected: list[dict] = []
+    profile = en.resolve_public_profile("Test Author", "Test University", ["https://lab.example.org/"], collected)
+    assert profile.verified_public_institutional is False
+    assert collected == [{"email": "t.author@random.org", "url": "https://lab.example.org/", "source": "public_profile_page", "verified": False}]
